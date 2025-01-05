@@ -56,6 +56,7 @@ class Action:
                 return None
 
             last_assistant_message = body["messages"][-1]
+            last_user_message = body["messages"][-2]
             user = Users.get_user_by_id(__user__["id"])
             if not user:
                 return None
@@ -66,11 +67,13 @@ class Action:
                     "data": {"description": "Adding to Memories", "done": False},
                 })
 
+            memory_content = f"User: {last_user_message['content']}\nAssistant: {last_assistant_message['content']}"
+
             # add the assistant response to memories
             try:
                 memory_model = MemoryModel(
                     id=str(uuid.uuid4()),
-                    content=last_assistant_message["content"],
+                    content=memory_content,
                     user_id=user.id,
                     created_at=int(time.time()),
                     updated_at=int(time.time())
