@@ -1,21 +1,22 @@
 """
 Changes:
+- migrated to openwebui v0.5
 - Improved formatting for CSS and JavaScript code.
 - Structured functions for better readability.
 - Cleaned up indentation and spacing for clarity.
 - Enhanced CSS styles for better responsiveness, including mobile, tablet, and desktop buttons.
 - Improved script functionality for handling multiple artifacts and toggling between views.
 
-author: open-webui, helloworldwastaken, atgehrhardt
+author: open-webui, helloworldwastaken, atgehrhardt, tokyohouseparty
 author_url:https://github.com/helloworldxdwastaken
 orignal_coder_author_url: https://github.com/atgehrhardt
 
 funding_url: https://github.com/open-webui
-version: 2.0.0
-required_open_webui_version: 0.3.10 or above
+version: 3.0.0
+required_open_webui_version: 0.5 or above
 """
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any, Callable, Awaitable
 from pydantic import BaseModel, Field
 import os
 import re
@@ -735,7 +736,7 @@ class MiddlewareHTMLGenerator:
                     <button id="nextArtifact" class="nav-button" aria-label="Next artifact">&#10095;</button>
                     <button id="fullscreenButton" class="fullscreen-button" aria-label="Toggle fullscreen">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M3 3h7v2H5v5H3V3zm18 0h-7v2h5v5h2V3zM3 21h7v-2H5v-5H3v7zm18 0h-7v-2h5v-5h2v7z" fill="currentColor"/>
+                            <path d="M3 3h7v2H5v5H3V3zm18 0h-7v2h5v5h2V3zM3 21h7v-2H5v-5H3v7zm18 0h-7v-2H5v-5H3v7z" fill="currentColor"/>
                         </svg>
                     </button>
                 </div>
@@ -761,7 +762,18 @@ class MiddlewareHTMLGenerator:
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=0, description="Priority level for the filter operations."
+            default=0,
+            description="Priority level for the filter operations."
+        )
+        enabled: bool = Field(
+            default=True,
+            description="Enable/disable the artifacts filter"
+        )
+
+    class UserValves(BaseModel):
+        show_status: bool = Field(
+            default=True,
+            description="Show status of artifact processing"
         )
 
     def __init__(self):
@@ -833,10 +845,23 @@ class Filter:
     def create_middleware_html(self, pages):
         return MiddlewareHTMLGenerator.create_middleware_html(pages)
 
-    def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
+    def inlet(
+        self,
+        body: dict,
+        __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
+        __user__: Optional[dict] = None
+    ) -> dict:
         return body
 
-    def outlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
+    async def outlet(
+        self,
+        body: dict,
+        __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
+        __user__: Optional[dict] = None
+    ) -> dict:
+        if not self.valves.enabled:
+            return body
+
         if "messages" in body and body["messages"] and __user__ and "id" in __user__:
             last_message = body["messages"][-1]["content"]
             chat_id = body.get("chat_id")
@@ -858,14 +883,28 @@ class Filter:
                             "content"
                         ] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
 
+                        if __event_emitter__ and __user__.get("valves", {}).get("show_status"):
+                            await __event_emitter__({
+                                "type": "status",
+                                "data": {
+                                    "description": "Artifact processed successfully",
+                                    "done": True
+                                }
+                            })
+
                 except Exception as e:
-                    error_msg = (
-                        f"Error processing content: {str(e)}\n{traceback.format_exc()}"
-                    )
+                    error_msg = f"Error processing content: {str(e)}\n{traceback.format_exc()}"
                     print(error_msg)
-                    body["messages"][-1][
-                        "content"
-                    ] += f"\n\nError: Failed to process content. Details: {error_msg}"
+                    body["messages"][-1]["content"] += f"\n\nError: Failed to process content. Details: {error_msg}"
+
+                    if __event_emitter__ and __user__.get("valves", {}).get("show_status"):
+                        await __event_emitter__({
+                            "type": "status",
+                            "data": {
+                                "description": f"Error processing artifact: {str(e)}",
+                                "done": True
+                            }
+                        })
             else:
                 print("chat_id is missing")
 
