@@ -17,7 +17,7 @@ required_open_webui_version: 0.5 or above
 """
 
 import logging
-from typing import Generator, Iterator, Optional
+from typing import Generator, Iterator, Optional, Callable, Awaitable, Any
 import aiohttp
 from aiohttp import ClientError
 
@@ -80,6 +80,10 @@ class Pipe:
         openai_api_url: str = Field(
             default="https://api.openai.com/v1",
             description="OpenAI API endpoint",
+        )
+        openai_api_key: str = Field(
+            default="",
+            description="OpenAI API key"
         )
         model: str = Field(
             default="gpt-3.5-turbo",
@@ -543,19 +547,55 @@ class Pipe:
 
     async def query_openai_api(self, model: str, system_prompt: str, prompt: str) -> str:
         url = f"{self.valves.openai_api_url}/v1/chat/completions"
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.valves.openai_api_key}"
+        }
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
+            "temperature": 0.7,
+            "max_tokens": 1000
         }
         try:
             async with aiohttp.ClientSession() as session:
                 response = await session.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 json_content = await response.json()
-            return json_content["choices"][0]["message"]["content"]
+
+                if "error" in json_content:
+                    raise Exception(json_content["error"]["message"])
+
+                return json_content["choices"][0]["message"]["content"]
         except ClientError as e:
-            raise Exception(f"Http error: {e.response.text}")
+            raise Exception(f"HTTP error: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Error calling OpenAI API: {str(e)}")
+
+    async def outlet(self, body: dict, __event_emitter__: Callable[[Any], Awaitable[None]], __user__: Optional[dict] = None) -> dict:
+        # Show thinking process visually
+        await __event_emitter__({
+            "type": "visual",
+            "data": {
+                "type": "thinking",
+                "icon": "🤔",  # Thinking icon
+                "title": f"Thinking ({self.valves.thinking_depth})",
+                "description": "Processing with structured thinking...",
+                "status": "processing"
+            }
+        })
+
+        # After processing
+        await __event_emitter__({
+            "type": "visual",
+            "data": {
+                "type": "thinking",
+                "icon": "✨",  # Complete icon
+                "title": "Thinking Complete",
+                "description": f"Used {self.valves.thinking_depth} depth analysis",
+                "status": "complete"
+            }
+        })

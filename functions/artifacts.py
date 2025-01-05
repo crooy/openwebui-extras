@@ -871,6 +871,12 @@ class Filter:
                     pages = self.parse_content(last_message)
 
                     if pages:
+                        await __event_emitter__.emit("status", {
+                            "message": "Creating artifact viewer...",
+                            "progress": 0,
+                            "done": False
+                        })
+
                         middleware_content = self.create_middleware_html(pages)
                         middleware_id = self.write_content_to_file(
                             middleware_content,
@@ -879,33 +885,17 @@ class Filter:
                             self.html_dir,
                         )
 
-                        body["messages"][-1][
-                            "content"
-                        ] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
+                        body["messages"][-1]["content"] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
 
-                        if __event_emitter__ and __user__.get("valves", {}).get("show_status"):
-                            await __event_emitter__({
-                                "type": "status",
-                                "data": {
-                                    "description": "Artifact processed successfully",
-                                    "done": True
-                                }
-                            })
+                        await __event_emitter__.emit("status", {
+                            "message": "Artifact viewer ready",
+                            "progress": 100,
+                            "done": True
+                        })
 
                 except Exception as e:
                     error_msg = f"Error processing content: {str(e)}\n{traceback.format_exc()}"
                     print(error_msg)
                     body["messages"][-1]["content"] += f"\n\nError: Failed to process content. Details: {error_msg}"
-
-                    if __event_emitter__ and __user__.get("valves", {}).get("show_status"):
-                        await __event_emitter__({
-                            "type": "status",
-                            "data": {
-                                "description": f"Error processing artifact: {str(e)}",
-                                "done": True
-                            }
-                        })
-            else:
-                print("chat_id is missing")
 
         return body

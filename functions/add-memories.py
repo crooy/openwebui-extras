@@ -14,6 +14,8 @@ from typing import Optional
 from fastapi.requests import Request
 from open_webui.models.users import Users
 from open_webui.models.memories import Memories, MemoryModel
+import uuid
+import time
 
 
 class Action:
@@ -66,8 +68,14 @@ class Action:
 
             # add the assistant response to memories
             try:
-                memory = MemoryModel(content=last_assistant_message["content"])
-                memory_obj = await Memories.insert_new_memory(user, memory)
+                memory_model = MemoryModel(
+                    id=str(uuid.uuid4()),
+                    content=last_assistant_message["content"],
+                    user_id=user.id,
+                    created_at=int(time.time()),
+                    updated_at=int(time.time())
+                )
+                memory_obj = await Memories.insert_new_memory(user, memory_model)
                 print(f"Memory Added: {memory_obj}")
             except Exception as e:
                 print(f"Error adding memory {str(e)}")
