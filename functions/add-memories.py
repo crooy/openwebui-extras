@@ -5,6 +5,7 @@ author_url: https://github.com/Peter-De-Ath
 funding_url: https://github.com/open-webui
 version: 0.3.0
 changelog:
+ - v0.3.1: Store both user message and assistant response in memory for better context
  - v0.2.0: migrated to openwebui v0.5
 required_open_webui_version: 0.5 or above
 """

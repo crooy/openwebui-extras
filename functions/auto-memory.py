@@ -3,14 +3,14 @@ title: Auto-memory
 author: caplescrest
 version: 0.3
 changelog:
+ - v0.4: Added LLM-based memory relevance, improved memory deduplication, better context handling
  - v0.3: migrated to openwebui v0.5, updated to use openai api by default
  - v0.2: checks existing memories to update them if needed instead of continually adding memories.
 to do:
  - offer confirmation before adding
  - Add valve to disable
  - consider more of chat history when making a memory
- - improve prompt to get better memories
- - allow function to default to the currently loaded model
+ - fine-tune memory relevance thresholds
 """
 
 from pydantic import BaseModel, Field
