@@ -1,5 +1,5 @@
 """
-Changes: 
+Changes:
 - Improved formatting for CSS and JavaScript code.
 - Structured functions for better readability.
 - Cleaned up indentation and spacing for clarity.
@@ -8,21 +8,22 @@ Changes:
 
 author: open-webui, helloworldwastaken, atgehrhardt
 author_url:https://github.com/helloworldxdwastaken
-orignal_coder_author_url: https://github.com/atgehrhardt 
+orignal_coder_author_url: https://github.com/atgehrhardt
 
 funding_url: https://github.com/open-webui
 version: 2.0.0
 required_open_webui_version: 0.3.10 or above
 """
 
+from typing import Optional, List, Dict
+from pydantic import BaseModel, Field
 import os
 import re
 import uuid
 import html
-from typing import Optional, List, Dict
-from pydantic import BaseModel, Field
+import traceback
 from bs4 import BeautifulSoup
-from open_webui.apps.webui.models.files import Files, FileForm
+from open_webui.models.files import Files, FileForm
 from open_webui.config import UPLOAD_DIR
 
 
@@ -374,7 +375,7 @@ class MiddlewareHTMLGenerator:
         function updateArtifactVisibility() {
             document.querySelectorAll('.content-item').forEach(item => {
                 const isCorrectArtifact = item.dataset.artifact == currentArtifact;
-                const isCorrectView = (item.classList.contains('render-view') && !isCodeView) || 
+                const isCorrectView = (item.classList.contains('render-view') && !isCodeView) ||
                                       (item.classList.contains('code-view') && isCodeView);
                 item.classList.toggle('hidden', !(isCorrectArtifact && isCorrectView));
             });
@@ -420,11 +421,11 @@ class MiddlewareHTMLGenerator:
             const frame = document.querySelector(`.content-item[data-artifact="${index + 1}"] .content-frame`);
             const editor = document.getElementById(`${type}-editor-${index}`);
             const content = editor.value;
-            
+
             let updatedSrcdoc = frame.getAttribute('data-original-content');
             const parser = new DOMParser();
             const doc = parser.parseFromString(updatedSrcdoc, 'text/html');
-            
+
             if (type === 'html') {
                 doc.body.innerHTML = content;
             } else if (type === 'css') {
@@ -442,18 +443,18 @@ class MiddlewareHTMLGenerator:
                 }
                 scriptTag.textContent = content;
             }
-        
+
             updatedSrcdoc = new XMLSerializer().serializeToString(doc);
-            
+
             frame.setAttribute('data-original-content', updatedSrcdoc);
-            
+
             if (!skipReload) {
                 frame.srcdoc = '';
                 setTimeout(() => {
                     frame.srcdoc = updatedSrcdoc;
                 }, 0);
             }
-        
+
             localStorage.setItem(`artifact_${index}_${type}`, content);
             console.log(`Content updated for artifact ${index + 1}, type ${type}`);
         }
@@ -466,7 +467,7 @@ class MiddlewareHTMLGenerator:
             textArea.select();
             document.execCommand('copy');
             document.body.removeChild(textArea);
-            
+
             const originalText = button.textContent;
             button.textContent = 'Copied!';
             setTimeout(() => {
@@ -486,7 +487,7 @@ class MiddlewareHTMLGenerator:
             document.querySelectorAll('.content-frame').forEach((frame, index) => {
                 const li = document.createElement('li');
                 const previewContent = frame.getAttribute('srcdoc');
-                
+
                 li.innerHTML = `
                     <div class="artifact-info">
                         <strong>Artifact ${index + 1}</strong>
@@ -525,7 +526,7 @@ class MiddlewareHTMLGenerator:
                 const width = this.getAttribute('data-width');
                 const wrapper = this.closest('.content-item').querySelector('.iframe-wrapper');
                 const iframe = wrapper.querySelector('.content-frame');
-                
+
                 if (width === '100%') {
                     wrapper.style.width = '100%';
                     wrapper.style.height = '600px';
@@ -537,7 +538,7 @@ class MiddlewareHTMLGenerator:
                     iframe.style.width = width;
                     iframe.style.height = '100%';
                 }
-                
+
                 this.closest('.responsive-controls').querySelectorAll('.device-button').forEach(btn => {
                     btn.classList.remove('active');
                 });
@@ -569,7 +570,7 @@ class MiddlewareHTMLGenerator:
 
         function toggleFullscreen() {
             const currentFrame = document.querySelector(`.content-item[data-artifact="${currentArtifact}"] .iframe-wrapper`);
-            
+
             if (!document.fullscreenElement) {
                 if (currentFrame.requestFullscreen) {
                     currentFrame.requestFullscreen();
@@ -592,7 +593,7 @@ class MiddlewareHTMLGenerator:
                 }
             }
         }
-        
+
         fullscreenButton.addEventListener('click', toggleFullscreen);
 
         document.addEventListener('fullscreenchange', updateFullscreenButtonIcon);
@@ -869,4 +870,3 @@ class Filter:
                 print("chat_id is missing")
 
         return body
-
