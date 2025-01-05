@@ -1,8 +1,9 @@
 """
 title: Auto-memory
 author: caplescrest
-version: 0.2
+version: 0.3
 changelog:
+ - v0.3: migrated to openwebui v0.5, updated to use openai api by default
  - v0.2: checks existing memories to update them if needed instead of continually adding memories.
 to do:
  - offer confirmation before adding
@@ -27,12 +28,12 @@ import time
 class Filter:
     class Valves(BaseModel):
         openai_api_url: str = Field(
-            default="http://host.docker.internal:11434",
-            description="openai compatible endpoint",
+            default="https://api.openai.com/v1",
+            description="OpenAI API endpoint",
         )
         model: str = Field(
-            default="llama3.1:8b-instruct-q8_0",
-            description="Model to use to determine memory",
+            default="gpt-3.5-turbo",
+            description="OpenAI model to use for memory processing",
         )
         related_memories_n: int = Field(
             default=5,
@@ -74,38 +75,44 @@ class Filter:
         __event_emitter__: Callable[[Any], Awaitable[None]],
         __user__: Optional[dict] = None,
     ) -> dict:
-        print(f"outlet:{__name__}")
-        print(f"outlet:body:{body}")
-        print(f"outlet:user:{__user__}")
+        if not self.valves.enabled:
+            return body
+
+        # Add null checks for body and messages
+        if not body or "messages" not in body or not body["messages"]:
+            return body
+
+        # Add null check for user
+        if not __user__ or "id" not in __user__:
+            return body
 
         memories = await self.identify_memories(body["messages"][-2]["content"])
 
         if memories.startswith("[") and memories.endswith("]") and len(memories) != 2:
             user = Users.get_user_by_id(__user__["id"])
+            if not user:  # Add null check for user
+                return body
 
             result = await self.process_memories(memories, user)
-            # body["messages"][-1]["content"] = body["messages"][-1]["content"] + result
-            if __user__["valves"].show_status:
+
+            # Add null check for user valves
+            if __user__.get("valves") and __user__["valves"].get("show_status"):
                 if result:
-                    await __event_emitter__(
-                        {
-                            "type": "status",
-                            "data": {
-                                "description": f"Added memory: {memories}",
-                                "done": True,
-                            },
-                        }
-                    )
+                    await __event_emitter__({
+                        "type": "status",
+                        "data": {
+                            "description": f"Added memory: {memories}",
+                            "done": True,
+                        },
+                    })
                 else:
-                    await __event_emitter__(
-                        {
-                            "type": "status",
-                            "data": {
-                                "description": f"Memory failed: {result}",
-                                "done": True,
-                            },
-                        }
-                    )
+                    await __event_emitter__({
+                        "type": "status",
+                        "data": {
+                            "description": f"Memory failed: {result}",
+                            "done": True,
+                        },
+                    })
         return body
 
     async def identify_memories(self, input_text: str) -> str:
