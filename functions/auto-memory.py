@@ -43,10 +43,6 @@ class Filter:
             default=5,
             description="Number of related memories to consider when updating memories",
         )
-        related_memories_dist: float = Field(
-            default=0.75,
-            description="Distance of memories to consider for updates. Smaller number will be more closely related.",
-        )
         enabled: bool = Field(
             default=True, description="Enable/disable the auto-memory filter"
         )
@@ -64,6 +60,7 @@ class Filter:
         - Important facts about the user's personal or professional life (e.g., profession, hobbies)
         - Specifics about the user's relationship with or views on certain topics
         - Location-related information, such as addresses or places the user frequently visits
+
         Few-shot Examples:
         Example 1: User Text: "I love hiking and spend most weekends exploring new trails." Response: ["User enjoys hiking", "User explores new trails on weekends"]
         Example 2: User Text: "My favorite cuisine is Japanese food, especially sushi." Response: ["User's favorite cuisine is Japanese", "User prefers sushi"]
@@ -347,6 +344,7 @@ class Filter:
 
 Please analyze these existing memories and select the all relevant ones for the current context.
 Better to err on the side of including too many memories than too few.
+Consider what information is needed to answer the question, location or habits information is often relevant for answering questions.
 Rate each memory's relevance from 0-10 and explain why it's relevant.
 
 Available memories:
@@ -355,8 +353,12 @@ Available memories:
 Return the response in this exact JSON format without any extra newlines:
 [{{"memory": "exact memory text", "relevance": score, "reason": "brief explanation"}}, ...]
 
+Example response for question "Will it rain tomorrow?"
+[{{"memory": "User lives in New York", "relevance": 9, "reason": "The question requires location information to determine if it will rain."}},{{"memory": "User lives in central street number 123 in New York", "relevance": 9, "reason": "The question requires location information to determine if it will rain."}}]
+
 Example response for question "When is my restaurant in NYC open?"
 [{{"memory": "User lives in New York", "relevance": 9, "reason": "Current message mentions NYC location"}}, {{"memory": "User prefers vegetarian food", "relevance": 8, "reason": "User is asking about restaurants"}}, {{"memory": "I have a passion for steak", "relevance": 7, "reason": "User is asking about food in New York"}}, {{"memory": "User lives in central street number 123 in New York", "relevance": 6, "reason": "User question is related to location."}}]"""
+
 
             # Get OpenAI's analysis
             response = await self.query_openai_api(
