@@ -1,11 +1,32 @@
 """Auto-memory filter for OpenWebUI"""
+"""
+title: Auto-memory
+original author: caplescrest
+author: crooy
+repo: https://github.com/crooy/opewebui-extras  --> feel free to contribute or submit issues
+version: 0.5-beta
+changelog:
+ - v0.5-beta: Added memory operations (NEW/UPDATE/DELETE), improved code structure, added datetime handling
+ - v0.4: Added LLM-based memory relevance, improved memory deduplication, better context handling
+ - v0.3: migrated to openwebui v0.5, updated to use openai api by default
+ - v0.2: checks existing memories to update them if needed instead of continually adding memories.
+to do:
+ - offer confirmation before adding
+ - consider more of chat history when making a memory
+ - fine-tune memory relevance thresholds
+ - improve memory tagging system, also for filtering relevant memories
+ - maybe add support for vector-database for storing memories
+ - maybe there should be an action to archive a chat, but summarize it's conclusions and store it as a memory, although it would be more of a logbook than an personal memory
+"""
+
 import json
 import os
 import time
 import traceback
 import uuid
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import (Any, Awaitable, Callable, Dict, List, Literal, Optional,
+                    Tuple, Union)
 
 import aiohttp
 from aiohttp import ClientError
