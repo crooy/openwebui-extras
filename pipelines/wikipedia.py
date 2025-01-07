@@ -30,9 +30,7 @@ class Pipeline:
         print(f"on_shutdown:{__name__}")
         pass
 
-    def pipe(
-        self, user_message: str, model_id: str, messages: List[dict], body: dict
-    ) -> Union[str, Generator, Iterator]:
+    def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> Union[str, Generator, Iterator]:
         # This is where you can add your custom pipelines like RAG.
         print(f"pipe:{__name__}")
 
@@ -44,9 +42,7 @@ class Pipeline:
             for query in [user_message]:
                 query = query.replace(" ", "_")
 
-                r = requests.get(
-                    f"https://en.wikipedia.org/w/api.php?action=opensearch&search={query}&limit=1&namespace=0&format=json"
-                )
+                r = requests.get(f"https://en.wikipedia.org/w/api.php?action=opensearch&search={query}&limit=1&namespace=0&format=json")
 
                 response = r.json()
                 titles = titles + response[1]
@@ -54,9 +50,7 @@ class Pipeline:
 
             context = None
             if len(titles) > 0:
-                r = requests.get(
-                    f"https://en.wikipedia.org/w/api.php?format=json&action=query&prop=extracts&exintro&explaintext&redirects=1&titles={'|'.join(titles)}"
-                )
+                r = requests.get(f"https://en.wikipedia.org/w/api.php?format=json&action=query&prop=extracts&exintro&explaintext&redirects=1&titles={'|'.join(titles)}")
                 response = r.json()
                 # get extracts
                 pages = response["query"]["pages"]

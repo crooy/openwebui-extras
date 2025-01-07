@@ -16,27 +16,21 @@ class StubTransformer(cst.CSTTransformer):
         """Track used names."""
         self.used_names.add(node.value)
 
-    def leave_ClassDef(
-        self, original_node: cst.ClassDef, updated_node: cst.ClassDef
-    ) -> cst.ClassDef:
+    def leave_ClassDef(self, original_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
         """Keep class structure but remove method bodies."""
         # Keep decorators, bases, and type parameters
         return updated_node.with_changes(
             body=cst.IndentedBlock(
                 body=[
                     # Keep method signatures but replace body with ellipsis
-                    node.with_changes(body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())]))
-                    if isinstance(node, cst.FunctionDef)
-                    else node
+                    node.with_changes(body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())])) if isinstance(node, cst.FunctionDef) else node
                     for node in updated_node.body.body
                     if isinstance(node, (cst.FunctionDef, cst.AnnAssign, cst.SimpleStatementLine))
                 ]
             )
         )
 
-    def leave_FunctionDef(
-        self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.FunctionDef:
+    def leave_FunctionDef(self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef) -> cst.FunctionDef:
         """Keep function signatures but remove bodies."""
         return updated_node.with_changes(body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())]))
 
@@ -52,9 +46,7 @@ class StubTransformer(cst.CSTTransformer):
             else:
                 filtered_body.append(node)
 
-        return updated_node.with_changes(
-            body=filtered_body
-        )
+        return updated_node.with_changes(body=filtered_body)
 
 
 def process_file(source_path: str, target_path: str) -> None:

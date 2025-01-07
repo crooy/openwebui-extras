@@ -14,12 +14,7 @@ class Tools:
     def __init__(self):
         pass
 
-    async def generate_image(
-        self,
-        prompt: str,
-        __user__: dict,
-        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None
-    ) -> str:
+    async def generate_image(self, prompt: str, __user__: dict, __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None) -> str:
         """
         Generate an image given a prompt
 

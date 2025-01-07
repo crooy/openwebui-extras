@@ -22,10 +22,7 @@ def download_file(url: str, target: str) -> None:
 
 def get_model_files(repo_url: str) -> List[str]:
     """Get list of all Python files in the models directory."""
-    api_url = (
-        repo_url.replace("github.com", "api.github.com/repos")
-        + "/contents/backend/open_webui/models"
-    )
+    api_url = repo_url.replace("github.com", "api.github.com/repos") + "/contents/backend/open_webui/models"
 
     try:
         with urllib.request.urlopen(api_url) as response:

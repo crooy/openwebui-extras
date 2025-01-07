@@ -882,9 +882,7 @@ class Filter:
                             self.html_dir,
                         )
 
-                        body["messages"][-1][
-                            "content"
-                        ] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
+                        body["messages"][-1]["content"] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
 
                         await __event_emitter__.emit(
                             "status",
@@ -894,8 +892,6 @@ class Filter:
                 except Exception as e:
                     error_msg = f"Error processing content: {str(e)}\n{traceback.format_exc()}"
                     print(error_msg)
-                    body["messages"][-1][
-                        "content"
-                    ] += f"\n\nError: Failed to process content. Details: {error_msg}"
+                    body["messages"][-1]["content"] += f"\n\nError: Failed to process content. Details: {error_msg}"
 
         return body

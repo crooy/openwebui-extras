@@ -35,9 +35,7 @@ class Action:
             default="https://api.openai.com/v1",
             description="OpenAI API endpoint",
         )
-        openai_api_key: str = Field(
-            default=os.getenv("OPENAI_API_KEY", ""), description="OpenAI API key"
-        )
+        openai_api_key: str = Field(default=os.getenv("OPENAI_API_KEY", ""), description="OpenAI API key")
         model: str = Field(
             default="gpt-3.5-turbo",
             description="OpenAI model to use for memory processing",
@@ -128,7 +126,7 @@ class Action:
 
             # Get recent message history
             messages = body["messages"]
-            recent_messages = messages[-min(self.valves.history_length, len(messages)):]
+            recent_messages = messages[-min(self.valves.history_length, len(messages)) :]
 
             # Format memory content
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -144,17 +142,13 @@ class Action:
                     print(f"Error getting summary, continuing without it: {e}")
 
             # Add the rest of the content
-            memory_content += (
-                f"last user message: {last_user_message['content']}\n"
-                f"last assistant message: {last_assistant_message['content']}"
-                + "\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in recent_messages])
+            memory_content += f"last user message: {last_user_message['content']}\n" f"last assistant message: {last_assistant_message['content']}" + "\n".join(
+                [f"{msg['role'].title()}: {msg['content']}" for msg in recent_messages]
             )
 
             # Add the memory
             try:
-                result = Memories.insert_new_memory(
-                    user_id=str(user.id), content=str(memory_content)
-                )
+                result = Memories.insert_new_memory(user_id=str(user.id), content=str(memory_content))
                 print(f"Memory Added: {result}")
             except Exception as e:
                 print(f"Error adding memory {str(e)}")
