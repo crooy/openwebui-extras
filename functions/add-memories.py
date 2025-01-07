@@ -32,17 +32,13 @@ import os
 
 class Action:
     class Valves(BaseModel):
-        enabled: bool = Field(
-            default=True,
-            description="Enable/disable the add memories action"
-        )
+        enabled: bool = Field(default=True, description="Enable/disable the add memories action")
         openai_api_url: str = Field(
             default="https://api.openai.com/v1",
             description="OpenAI API endpoint",
         )
         openai_api_key: str = Field(
-            default=os.getenv("OPENAI_API_KEY", ""),
-            description="OpenAI API key"
+            default=os.getenv("OPENAI_API_KEY", ""), description="OpenAI API key"
         )
         model: str = Field(
             default="gpt-3.5-turbo",
@@ -54,10 +50,7 @@ class Action:
         )
 
     class UserValves(BaseModel):
-        show_status: bool = Field(
-            default=True,
-            description="Show status of memory processing"
-        )
+        show_status: bool = Field(default=True, description="Show status of memory processing")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -77,10 +70,7 @@ class Action:
         Keep it concise but informative."""
 
         # Format conversation history
-        conversation = "\n".join([
-            f"{msg['role'].title()}: {msg['content']}"
-            for msg in messages
-        ])
+        conversation = "\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in messages])
 
         payload = {
             "model": self.valves.model,
@@ -130,14 +120,16 @@ class Action:
                 return None
 
             if user_valves.show_status:
-                await __event_emitter__({
-                    "type": "status",
-                    "data": {"description": "Adding to Memories", "done": False},
-                })
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": "Adding to Memories", "done": False},
+                    }
+                )
 
             # Get recent message history
             messages = body["messages"]
-            recent_messages = messages[-min(self.valves.history_length, len(messages)):]
+            recent_messages = messages[-min(self.valves.history_length, len(messages)) :]
 
             # Format memory content
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -156,41 +148,43 @@ class Action:
             memory_content += (
                 f"last user message: {last_user_message['content']}\n"
                 f"last assistant message: {last_assistant_message['content']}"
-                + "\n".join([
-                    f"{msg['role'].title()}: {msg['content']}"
-                    for msg in recent_messages
-                ])
+                + "\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in recent_messages])
             )
 
             # Add the memory
             try:
                 result = Memories.insert_new_memory(
-                    user_id=str(user.id),
-                    content=str(memory_content)
+                    user_id=str(user.id), content=str(memory_content)
                 )
                 print(f"Memory Added: {result}")
             except Exception as e:
                 print(f"Error adding memory {str(e)}")
                 if user_valves.show_status:
-                    await __event_emitter__({
-                        "type": "status",
-                        "data": {
-                            "description": "Error Adding Memory",
-                            "done": True,
-                        },
-                    })
+                    await __event_emitter__(
+                        {
+                            "type": "status",
+                            "data": {
+                                "description": "Error Adding Memory",
+                                "done": True,
+                            },
+                        }
+                    )
 
-                    await __event_emitter__({
-                        "type": "citation",
-                        "data": {
-                            "source": {"name": "Error:adding memory"},
-                            "document": [str(e)],
-                            "metadata": [{"source": "Add to Memory Action Button"}],
-                        },
-                    })
+                    await __event_emitter__(
+                        {
+                            "type": "citation",
+                            "data": {
+                                "source": {"name": "Error:adding memory"},
+                                "document": [str(e)],
+                                "metadata": [{"source": "Add to Memory Action Button"}],
+                            },
+                        }
+                    )
 
             if user_valves.show_status:
-                await __event_emitter__({
-                    "type": "status",
-                    "data": {"description": "Memory Saved", "done": True},
-                })
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": "Memory Saved", "done": True},
+                    }
+                )

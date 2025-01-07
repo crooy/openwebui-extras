@@ -694,9 +694,7 @@ class MiddlewareHTMLGenerator:
 
     @classmethod
     def create_middleware_html(cls, pages):
-        content_items = "".join(
-            cls.generate_content_item(i, page) for i, page in enumerate(pages)
-        )
+        content_items = "".join(cls.generate_content_item(i, page) for i, page in enumerate(pages))
 
         return f"""
         <!DOCTYPE html>
@@ -761,20 +759,11 @@ class MiddlewareHTMLGenerator:
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(
-            default=0,
-            description="Priority level for the filter operations."
-        )
-        enabled: bool = Field(
-            default=True,
-            description="Enable/disable the artifacts filter"
-        )
+        priority: int = Field(default=0, description="Priority level for the filter operations.")
+        enabled: bool = Field(default=True, description="Enable/disable the artifacts filter")
 
     class UserValves(BaseModel):
-        show_status: bool = Field(
-            default=True,
-            description="Show status of artifact processing"
-        )
+        show_status: bool = Field(default=True, description="Show status of artifact processing")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -849,7 +838,7 @@ class Filter:
         self,
         body: dict,
         __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
-        __user__: Optional[dict] = None
+        __user__: Optional[dict] = None,
     ) -> dict:
         return body
 
@@ -857,7 +846,7 @@ class Filter:
         self,
         body: dict,
         __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
-        __user__: Optional[dict] = None
+        __user__: Optional[dict] = None,
     ) -> dict:
         if not self.valves.enabled:
             return body
@@ -871,11 +860,14 @@ class Filter:
                     pages = self.parse_content(last_message)
 
                     if pages:
-                        await __event_emitter__.emit("status", {
-                            "message": "Creating artifact viewer...",
-                            "progress": 0,
-                            "done": False
-                        })
+                        await __event_emitter__.emit(
+                            "status",
+                            {
+                                "message": "Creating artifact viewer...",
+                                "progress": 0,
+                                "done": False,
+                            },
+                        )
 
                         middleware_content = self.create_middleware_html(pages)
                         middleware_id = self.write_content_to_file(
@@ -885,17 +877,20 @@ class Filter:
                             self.html_dir,
                         )
 
-                        body["messages"][-1]["content"] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
+                        body["messages"][-1][
+                            "content"
+                        ] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
 
-                        await __event_emitter__.emit("status", {
-                            "message": "Artifact viewer ready",
-                            "progress": 100,
-                            "done": True
-                        })
+                        await __event_emitter__.emit(
+                            "status",
+                            {"message": "Artifact viewer ready", "progress": 100, "done": True},
+                        )
 
                 except Exception as e:
                     error_msg = f"Error processing content: {str(e)}\n{traceback.format_exc()}"
                     print(error_msg)
-                    body["messages"][-1]["content"] += f"\n\nError: Failed to process content. Details: {error_msg}"
+                    body["messages"][-1][
+                        "content"
+                    ] += f"\n\nError: Failed to process content. Details: {error_msg}"
 
         return body
