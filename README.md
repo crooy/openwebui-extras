@@ -1,6 +1,40 @@
 # OpenWebUI Functions
 
-> All functions in this repository can be found at [github.com/crooy/opewebui-extras](https://github.com/crooy/opewebui-extras)
+> All functions in this repository can be found at [github.com/crooy/openwebui-extras](https://github.com/crooy/openwebui-extras)
+
+For detailed version history, see [CHANGELOG.md](CHANGELOG.md)
+
+## Development
+
+### Setup
+
+Using Nix Flake (recommended):
+
+```bash
+# Enable flakes in your nix configuration
+
+# Enter development shell
+nix develop
+
+# Or use direnv with flakes
+direnv allow
+```
+
+Manual setup:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+### Linting
+
+```bash
+mypy .
+flake8 .
+black .
+```
+
+The code is typed against the OpenWebUI models by installing the package as a dev dependency.
 
 For detailed version history, see [CHANGELOG.md](CHANGELOG.md)
 
@@ -66,7 +100,7 @@ Both memory functions can be configured through their respective valve settings:
 
 ## Repository
 
-All code is available at [github.com/crooy/opewebui-extras](https://github.com/crooy/opewebui-extras). Feel free to:
+All code is available at [github.com/crooy/openwebui-extras](https://github.com/crooy/openwebui-extras). Feel free to:
 
 - Submit issues
 - Create pull requests
