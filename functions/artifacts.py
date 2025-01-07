@@ -807,7 +807,7 @@ class Filter:
         file = Files.insert_new_file(user_id, file_form)
         if file is None:
             raise ValueError("Failed to insert file")
-        return file.id
+        return str(file.id)
 
     def parse_content(self, content: str) -> List[Dict[str, str]]:
         html_pattern = r"```(?:html|xml)\s*([\s\S]*?)\s*```"
