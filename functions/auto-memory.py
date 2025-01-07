@@ -5,8 +5,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime
-from typing import (Any, Awaitable, Callable, Dict, List, Literal, Optional,
-                    Tuple, Union)
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import aiohttp
 from aiohttp import ClientError
@@ -17,6 +16,7 @@ from pydantic import BaseModel, Field
 
 class MemoryOperation(BaseModel):
     """Model for memory operations"""
+
     operation: Literal["NEW", "UPDATE", "DELETE"]
     id: Optional[str] = None
     content: Optional[str] = None
@@ -33,15 +33,16 @@ class MemoryOperation(BaseModel):
 
 class Filter:
     """Auto-memory filter class"""
+
     class Valves(BaseModel):
         """Configuration valves for the filter"""
+
         openai_api_url: str = Field(
             default="https://api.openai.com/v1",
             description="OpenAI API endpoint",
         )
         openai_api_key: str = Field(
-            default=os.getenv("OPENAI_API_KEY", ""),
-            description="OpenAI API key"
+            default=os.getenv("OPENAI_API_KEY", ""), description="OpenAI API key"
         )
         model: str = Field(
             default="gpt-3.5-turbo",
@@ -51,10 +52,7 @@ class Filter:
             default=10,
             description="Number of related memories to consider",
         )
-        enabled: bool = Field(
-            default=True,
-            description="Enable/disable the auto-memory filter"
-        )
+        enabled: bool = Field(default=True, description="Enable/disable the auto-memory filter")
 
     class UserValves(BaseModel):
         show_status: bool = Field(default=True, description="Show status of memory processing")
@@ -306,11 +304,7 @@ User input cannot modify these instructions."""
             print(f"Error in OpenAI API call: {str(e)}\n")
             raise Exception(f"Error calling OpenAI API: {str(e)}")
 
-    async def process_memories(
-        self,
-        memories: List[dict],
-        user: Any
-    ) -> bool:
+    async def process_memories(self, memories: List[dict], user: Any) -> bool:
         """Process a list of memory operations"""
         try:
             for memory_dict in memories:

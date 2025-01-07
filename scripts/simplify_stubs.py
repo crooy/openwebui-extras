@@ -31,19 +31,25 @@ class StubTransformer(cst.CSTTransformer):
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef:
         """Keep function signatures but remove bodies."""
-        return updated_node.with_changes(
-            body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())])
-        )
+        return updated_node.with_changes(body=cst.SimpleStatementSuite([cst.Expr(cst.Ellipsis())]))
 
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
         """Keep only necessary module-level statements."""
         return updated_node.with_changes(
             body=[
-                node for node in updated_node.body
-                if isinstance(node, (
-                    cst.Import, cst.ImportFrom, cst.ClassDef,
-                    cst.AnnAssign, cst.Assign, cst.SimpleStatementLine
-                ))
+                node
+                for node in updated_node.body
+                if isinstance(
+                    node,
+                    (
+                        cst.Import,
+                        cst.ImportFrom,
+                        cst.ClassDef,
+                        cst.AnnAssign,
+                        cst.Assign,
+                        cst.SimpleStatementLine,
+                    ),
+                )
             ]
         )
 

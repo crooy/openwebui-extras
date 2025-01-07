@@ -22,18 +22,15 @@ def download_file(url: str, target: str) -> None:
 
 def get_model_files(repo_url: str) -> List[str]:
     """Get list of all Python files in the models directory."""
-    api_url = repo_url.replace(
-        "github.com", "api.github.com/repos"
-    ) + "/contents/backend/open_webui/models"
+    api_url = (
+        repo_url.replace("github.com", "api.github.com/repos")
+        + "/contents/backend/open_webui/models"
+    )
 
     try:
         with urllib.request.urlopen(api_url) as response:
             files = json.loads(response.read())
-            return [
-                f["name"]
-                for f in files
-                if f["name"].endswith(".py")
-            ]
+            return [f["name"] for f in files if f["name"].endswith(".py")]
     except Exception as e:
         print(f"Error fetching file list: {e}, falling back to default files")
         return [
@@ -66,10 +63,12 @@ def main() -> None:
 
     # Convert to stubs
     import os.path
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     simplify_script = os.path.join(script_dir, "simplify_stubs.py")
     if os.path.exists(simplify_script):
         import runpy
+
         runpy.run_path(simplify_script)
     else:
         print("Warning: simplify_stubs.py not found")
