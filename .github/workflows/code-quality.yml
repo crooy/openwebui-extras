@@ -22,6 +22,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+          pip install libcst
+          mkdir -p stubs/open_webui/models
+          rm -f stubs/open_webui/models/*
           make setup-stubs
 
       - name: Check formatting with black

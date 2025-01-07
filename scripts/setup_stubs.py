@@ -2,14 +2,16 @@
 """Script to fetch and set up type stubs for OpenWebUI models."""
 import json
 import os
+import shutil
 import urllib.request
 from typing import List
 
 
-def ensure_dir(path: str) -> None:
-    """Create directory if it doesn't exist."""
-    if not os.path.exists(path):
-        os.makedirs(path)
+def ensure_clean_dir(path: str) -> None:
+    """Create or clean directory."""
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path)
 
 
 def download_file(url: str, target: str) -> None:
@@ -47,7 +49,7 @@ def main() -> None:
     """Main function to set up stubs."""
     # Setup paths
     stub_dir = "stubs/open_webui/models"
-    ensure_dir(stub_dir)
+    ensure_clean_dir(stub_dir)
 
     # Get list of model files
     repo_url = "https://github.com/open-webui/open-webui"
@@ -63,12 +65,14 @@ def main() -> None:
         download_file(url, target)
 
     # Convert to stubs
-    for file in os.listdir(stub_dir):
-        if file.endswith(".py"):
-            src = f"{stub_dir}/{file}"
-            dst = f"{stub_dir}/{file}i"
-            print(f"Converting {src} to {dst}")
-            os.rename(src, dst)
+    import os.path
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    simplify_script = os.path.join(script_dir, "simplify_stubs.py")
+    if os.path.exists(simplify_script):
+        import runpy
+        runpy.run_path(simplify_script)
+    else:
+        print("Warning: simplify_stubs.py not found")
 
 
 if __name__ == "__main__":
