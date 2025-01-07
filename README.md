@@ -36,6 +36,40 @@ black .
 
 The code is typed against the OpenWebUI models by installing the package as a dev dependency.
 
+For detailed version history, see [CHANGELOG.md](CHANGELOG.md)
+
+## Development
+
+### Setup
+
+Using Nix Flake (recommended):
+
+```bash
+# Enable flakes in your nix configuration
+
+# Enter development shell
+nix develop
+
+# Or use direnv with flakes
+direnv allow
+```
+
+Manual setup:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+### Linting
+
+```bash
+mypy .
+flake8 .
+black .
+```
+
+The code is typed against the OpenWebUI models by installing the package as a dev dependency.
+
 ## Memory Management Functions
 
 ### Auto Memory
