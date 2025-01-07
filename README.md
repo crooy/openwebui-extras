@@ -1,6 +1,6 @@
 # OpenWebUI Functions
 
-> All functions in this repository can be found at [github.com/crooy/opewebui-extras](https://github.com/crooy/opewebui-extras)
+> All functions in this repository can be found at [github.com/crooy/opewenbui-extras](https://github.com/crooy/opewenbui-extras)
 
 For detailed version history, see [CHANGELOG.md](CHANGELOG.md)
 
@@ -66,7 +66,7 @@ Both memory functions can be configured through their respective valve settings:
 
 ## Repository
 
-All code is available at [github.com/crooy/opewebui-extras](https://github.com/crooy/opewebui-extras). Feel free to:
+All code is available at [github.com/crooy/openwebui-extras](https://github.com/crooy/openwebui-extras). Feel free to:
 
 - Submit issues
 - Create pull requests

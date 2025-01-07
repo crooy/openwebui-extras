@@ -2,7 +2,7 @@
 title: Add to Memory Action Button
 original_author: Peter De-Ath
 original_author_url: https://github.com/Peter-De-Ath
-repo: https://github.com/crooy/opewebui-extras/tree/main
+repo: https://github.com/crooy/openwebui-extras/tree/main
 description: Adds a button to manually save conversations to memory with LLM-generated summaries
 version: 0.3.0
 changelog:
