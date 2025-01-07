@@ -21,11 +21,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install wheel setuptools
+          pip install types-aiohttp==3.8.5  # Pin to a specific version
           pip install -r requirements-dev.txt
-          pip install libcst
+
+      - name: Setup stubs
+        run: |
           mkdir -p stubs/open_webui/models
-          rm -f stubs/open_webui/models/*
-          make setup-stubs
+          python scripts/setup_stubs.py
 
       - name: Check formatting with black
         run: |
