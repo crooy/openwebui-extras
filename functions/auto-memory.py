@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 title: Auto-memory
 original author: caplescrest
 author: crooy
-repo: https://github.com/crooy/opewenbui-extras  --> feel free to contribute or submit issues
+repo: https://github.com/crooy/openwebui-extras  --> feel free to contribute or submit issues
 version: 0.6
 changelog:
  - v0.6: all coded has been linted, formatted, and type-checked

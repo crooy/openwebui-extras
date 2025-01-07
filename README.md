@@ -1,6 +1,6 @@
 # OpenWebUI Functions
 
-> All functions in this repository can be found at [github.com/crooy/opewenbui-extras](https://github.com/crooy/opewenbui-extras)
+> All functions in this repository can be found at [github.com/crooy/openwebui-extras](https://github.com/crooy/openwebui-extras)
 
 For detailed version history, see [CHANGELOG.md](CHANGELOG.md)
 
