@@ -7,16 +7,19 @@ version: 0.1
 required_open_webui_version: 0.3.9
 """
 
-import os
-import requests
-from datetime import datetime
+from typing import Awaitable, Callable, Optional
 
 
 class Tools:
     def __init__(self):
         pass
 
-    async def generate_image(self, prompt: str, __user__: dict, __event_emitter__=None) -> str:
+    async def generate_image(
+        self,
+        prompt: str,
+        __user__: dict,
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None
+    ) -> str:
         """
         Generate an image given a prompt
 

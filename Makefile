@@ -12,10 +12,10 @@ setup-stubs: install-deps
 format:
 	black .
 
-lint: setup-stubs
+lint:
 	flake8 .
 
-check: setup-stubs
+check:
 	mypy .
 
 all: setup-stubs format lint check

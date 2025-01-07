@@ -1,7 +1,6 @@
 [flake8]
-max-line-length = 100
-exclude = .git,__pycache__,build,dist,.direnv,venv
-extend-exclude = stubs/
+max-line-length = 200
+exclude = .git,__pycache__,build,dist,.direnv,venv,.venv,stubs/**/*
 extend-ignore =
     # See https://github.com/PyCQA/pycodestyle/issues/373
     E203,

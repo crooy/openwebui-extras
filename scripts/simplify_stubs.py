@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Script to simplify Python files into type stubs."""
 import os
-from typing import List, Optional
 
 import libcst as cst
 
 
 class StubTransformer(cst.CSTTransformer):
     """Transform Python code into stub definitions."""
+
+    def __init__(self):
+        super().__init__()
+        self.used_names = set()
+
+    def visit_Name(self, node: cst.Name) -> None:
+        """Track used names."""
+        self.used_names.add(node.value)
 
     def leave_ClassDef(
         self, original_node: cst.ClassDef, updated_node: cst.ClassDef
@@ -35,22 +42,18 @@ class StubTransformer(cst.CSTTransformer):
 
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
         """Keep only necessary module-level statements."""
+        # Filter imports to only keep used ones
+        filtered_body = []
+        for node in updated_node.body:
+            if isinstance(node, (cst.Import, cst.ImportFrom)):
+                # Check if any imported names are used
+                if any(name.value in self.used_names for name in node.names):
+                    filtered_body.append(node)
+            else:
+                filtered_body.append(node)
+
         return updated_node.with_changes(
-            body=[
-                node
-                for node in updated_node.body
-                if isinstance(
-                    node,
-                    (
-                        cst.Import,
-                        cst.ImportFrom,
-                        cst.ClassDef,
-                        cst.AnnAssign,
-                        cst.Assign,
-                        cst.SimpleStatementLine,
-                    ),
-                )
-            ]
+            body=filtered_body
         )
 
 

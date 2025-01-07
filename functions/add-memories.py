@@ -18,16 +18,14 @@ features:
  - Error handling with user feedback
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional
-from fastapi.requests import Request
-from open_webui.models.users import Users
-from open_webui.models.memories import Memories, MemoryModel
-import uuid
-import time
-from datetime import datetime
-import aiohttp
 import os
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Optional
+
+import aiohttp
+from open_webui.models.memories import Memories
+from open_webui.models.users import Users
+from pydantic import BaseModel, Field
 
 
 class Action:
@@ -59,6 +57,7 @@ class Action:
         self,
         messages: list,
     ) -> str:
+        """Query OpenAI API for conversation summary."""
         url = f"{self.valves.openai_api_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -96,8 +95,8 @@ class Action:
         self,
         body: dict,
         __user__: Optional[dict] = None,
-        __event_emitter__=None,
-        __event_call__=None,
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
+        __event_call__: Optional[Callable[..., Awaitable[Any]]] = None,
     ) -> Optional[dict]:
         if not self.valves.enabled:
             return None
@@ -129,7 +128,7 @@ class Action:
 
             # Get recent message history
             messages = body["messages"]
-            recent_messages = messages[-min(self.valves.history_length, len(messages)) :]
+            recent_messages = messages[-min(self.valves.history_length, len(messages)):]
 
             # Format memory content
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -188,3 +187,7 @@ class Action:
                         "data": {"description": "Memory Saved", "done": True},
                     }
                 )
+
+            return body
+
+        return None

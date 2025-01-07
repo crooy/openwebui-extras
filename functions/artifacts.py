@@ -16,21 +16,21 @@ version: 3.0.0
 required_open_webui_version: 0.5 or above
 """
 
-from typing import Optional, List, Dict, Any, Callable, Awaitable
-from pydantic import BaseModel, Field
+import html
 import os
 import re
-import uuid
-import html
 import traceback
-from bs4 import BeautifulSoup
-from open_webui.models.files import Files, FileForm
+import uuid
+from typing import Any, Awaitable, Callable, Optional
+
 from open_webui.config import UPLOAD_DIR
+from open_webui.models.files import FileForm, Files
+from pydantic import BaseModel, Field
 
 
 class MiddlewareHTMLGenerator:
     @staticmethod
-    def generate_style():
+    def generate_style() -> str:
         return """
         body {
             font-family: Arial, sans-serif;
@@ -329,7 +329,7 @@ class MiddlewareHTMLGenerator:
         """
 
     @staticmethod
-    def generate_script():
+    def generate_script() -> str:
         return """
         const totalArtifacts = document.querySelectorAll('.render-view').length;
         let currentArtifact = 1;
@@ -622,7 +622,7 @@ class MiddlewareHTMLGenerator:
         """
 
     @staticmethod
-    def generate_content_item(i, page):
+    def generate_content_item(i: int, page: dict) -> str:
         html_content = page.get("html", "")
         raw_html = page.get("raw_html", "")
         css_content = page.get("css", "")
@@ -661,7 +661,12 @@ class MiddlewareHTMLGenerator:
                     <button class="device-button active" data-width="100%">Desktop</button>
                 </div>
                 <div class="iframe-wrapper">
-                    <iframe class="content-frame" sandbox="allow-scripts" srcdoc="{escaped_base_html}" data-original-content="{escaped_base_html}"></iframe>
+                    <iframe
+                        class="content-frame"
+                        sandbox="allow-scripts"
+                        srcdoc="{escaped_base_html}"
+                        data-original-content="{escaped_base_html}"
+                    ></iframe>
                     <div class="resize-handle"></div>
                 </div>
             </div>
@@ -693,7 +698,7 @@ class MiddlewareHTMLGenerator:
         """
 
     @classmethod
-    def create_middleware_html(cls, pages):
+    def create_middleware_html(cls, pages: list[dict]) -> str:
         content_items = "".join(cls.generate_content_item(i, page) for i, page in enumerate(pages))
 
         return f"""

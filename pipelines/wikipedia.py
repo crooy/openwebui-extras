@@ -1,8 +1,8 @@
-from typing import List, Union, Generator, Iterator
-from pydantic import BaseModel
-from schemas import OpenAIChatMessage
-import requests
 import os
+from typing import Generator, Iterator, List, Union
+
+import requests
+from pydantic import BaseModel
 
 
 class Pipeline:
@@ -61,7 +61,7 @@ class Pipeline:
                 # get extracts
                 pages = response["query"]["pages"]
                 for page in pages:
-                    if context == None:
+                    if context is None:
                         context = pages[page]["extract"] + "\n"
                     else:
                         context = context + pages[page]["extract"] + "\n"
