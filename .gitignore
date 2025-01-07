@@ -39,3 +39,6 @@ ENV/
 
 # Misc
 .DS_Store
+
+# Type stubs
+stubs/

@@ -1,4 +1,7 @@
-.PHONY: lint format check
+.PHONY: lint format check setup-stubs
+
+setup-stubs:
+	python scripts/setup_stubs.py
 
 format:
 	black .
@@ -9,4 +12,4 @@ lint:
 check:
 	mypy .
 
-all: format lint check
+all: setup-stubs format lint check
