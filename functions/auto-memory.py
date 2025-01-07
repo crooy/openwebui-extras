@@ -25,8 +25,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime
-from typing import (Any, Awaitable, Callable, Dict, List, Literal, Optional,
-                    Tuple, Union)
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import aiohttp
 from aiohttp import ClientError
