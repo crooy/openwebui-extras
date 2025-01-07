@@ -1,0 +1,39 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+
+      - name: Setup stubs
+        run: |
+          mkdir -p stubs/open_webui/models
+          python scripts/setup_stubs.py
+
+      - name: Check formatting with black
+        run: |
+          make format
+          git diff --exit-code || (echo "Please run 'make format' to fix formatting issues" && exit 1)
+
+      - name: Run flake8
+        run: make lint
+
+      - name: Run mypy
+        run: make check
