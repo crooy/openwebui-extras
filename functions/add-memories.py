@@ -18,32 +18,24 @@ features:
  - Error handling with user feedback
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional
-from fastapi.requests import Request
-from open_webui.models.users import Users
-from open_webui.models.memories import Memories, MemoryModel
-import uuid
-import time
-from datetime import datetime
-import aiohttp
 import os
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+import aiohttp
+from open_webui.models.memories import Memories
+from open_webui.models.users import Users
+from pydantic import BaseModel, Field
 
 
 class Action:
     class Valves(BaseModel):
-        enabled: bool = Field(
-            default=True,
-            description="Enable/disable the add memories action"
-        )
+        enabled: bool = Field(default=True, description="Enable/disable the add memories action")
         openai_api_url: str = Field(
             default="https://api.openai.com/v1",
             description="OpenAI API endpoint",
         )
-        openai_api_key: str = Field(
-            default=os.getenv("OPENAI_API_KEY", ""),
-            description="OpenAI API key"
-        )
+        openai_api_key: str = Field(default=os.getenv("OPENAI_API_KEY", ""), description="OpenAI API key")
         model: str = Field(
             default="gpt-3.5-turbo",
             description="OpenAI model to use for memory processing",
@@ -54,18 +46,16 @@ class Action:
         )
 
     class UserValves(BaseModel):
-        show_status: bool = Field(
-            default=True,
-            description="Show status of memory processing"
-        )
+        show_status: bool = Field(default=True, description="Show status of memory processing")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.valves = self.Valves()
 
     async def query_openai_api(
         self,
-        messages: list,
+        messages: List[Dict[str, str]],
     ) -> str:
+        """Query OpenAI API for conversation summary."""
         url = f"{self.valves.openai_api_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -77,10 +67,7 @@ class Action:
         Keep it concise but informative."""
 
         # Format conversation history
-        conversation = "\n".join([
-            f"{msg['role'].title()}: {msg['content']}"
-            for msg in messages
-        ])
+        conversation = "\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in messages])
 
         payload = {
             "model": self.valves.model,
@@ -97,7 +84,7 @@ class Action:
                 response = await session.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 json_content = await response.json()
-                return json_content["choices"][0]["message"]["content"]
+                return str(json_content["choices"][0]["message"]["content"])
         except Exception as e:
             print(f"Error getting summary: {e}")
             return ""
@@ -106,8 +93,8 @@ class Action:
         self,
         body: dict,
         __user__: Optional[dict] = None,
-        __event_emitter__=None,
-        __event_call__=None,
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
+        __event_call__: Optional[Callable[..., Awaitable[Any]]] = None,
     ) -> Optional[dict]:
         if not self.valves.enabled:
             return None
@@ -130,14 +117,16 @@ class Action:
                 return None
 
             if user_valves.show_status:
-                await __event_emitter__({
-                    "type": "status",
-                    "data": {"description": "Adding to Memories", "done": False},
-                })
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": "Adding to Memories", "done": False},
+                    }
+                )
 
             # Get recent message history
             messages = body["messages"]
-            recent_messages = messages[-min(self.valves.history_length, len(messages)):]
+            recent_messages = messages[-min(self.valves.history_length, len(messages)) :]
 
             # Format memory content
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -153,44 +142,46 @@ class Action:
                     print(f"Error getting summary, continuing without it: {e}")
 
             # Add the rest of the content
-            memory_content += (
-                f"last user message: {last_user_message['content']}\n"
-                f"last assistant message: {last_assistant_message['content']}"
-                + "\n".join([
-                    f"{msg['role'].title()}: {msg['content']}"
-                    for msg in recent_messages
-                ])
+            memory_content += f"last user message: {last_user_message['content']}\n" f"last assistant message: {last_assistant_message['content']}" + "\n".join(
+                [f"{msg['role'].title()}: {msg['content']}" for msg in recent_messages]
             )
 
             # Add the memory
             try:
-                result = Memories.insert_new_memory(
-                    user_id=str(user.id),
-                    content=str(memory_content)
-                )
+                result = Memories.insert_new_memory(user_id=str(user.id), content=str(memory_content))
                 print(f"Memory Added: {result}")
             except Exception as e:
                 print(f"Error adding memory {str(e)}")
                 if user_valves.show_status:
-                    await __event_emitter__({
-                        "type": "status",
-                        "data": {
-                            "description": "Error Adding Memory",
-                            "done": True,
-                        },
-                    })
+                    await __event_emitter__(
+                        {
+                            "type": "status",
+                            "data": {
+                                "description": "Error Adding Memory",
+                                "done": True,
+                            },
+                        }
+                    )
 
-                    await __event_emitter__({
-                        "type": "citation",
-                        "data": {
-                            "source": {"name": "Error:adding memory"},
-                            "document": [str(e)],
-                            "metadata": [{"source": "Add to Memory Action Button"}],
-                        },
-                    })
+                    await __event_emitter__(
+                        {
+                            "type": "citation",
+                            "data": {
+                                "source": {"name": "Error:adding memory"},
+                                "document": [str(e)],
+                                "metadata": [{"source": "Add to Memory Action Button"}],
+                            },
+                        }
+                    )
 
             if user_valves.show_status:
-                await __event_emitter__({
-                    "type": "status",
-                    "data": {"description": "Memory Saved", "done": True},
-                })
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": "Memory Saved", "done": True},
+                    }
+                )
+
+            return body
+
+        return None

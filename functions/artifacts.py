@@ -16,21 +16,21 @@ version: 3.0.0
 required_open_webui_version: 0.5 or above
 """
 
-from typing import Optional, List, Dict, Any, Callable, Awaitable
-from pydantic import BaseModel, Field
+import html
 import os
 import re
-import uuid
-import html
 import traceback
-from bs4 import BeautifulSoup
-from open_webui.models.files import Files, FileForm
+import uuid
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
 from open_webui.config import UPLOAD_DIR
+from open_webui.models.files import FileForm, Files
+from pydantic import BaseModel, Field
 
 
 class MiddlewareHTMLGenerator:
     @staticmethod
-    def generate_style():
+    def generate_style() -> str:
         return """
         body {
             font-family: Arial, sans-serif;
@@ -329,7 +329,7 @@ class MiddlewareHTMLGenerator:
         """
 
     @staticmethod
-    def generate_script():
+    def generate_script() -> str:
         return """
         const totalArtifacts = document.querySelectorAll('.render-view').length;
         let currentArtifact = 1;
@@ -622,7 +622,7 @@ class MiddlewareHTMLGenerator:
         """
 
     @staticmethod
-    def generate_content_item(i, page):
+    def generate_content_item(i: int, page: dict) -> str:
         html_content = page.get("html", "")
         raw_html = page.get("raw_html", "")
         css_content = page.get("css", "")
@@ -661,7 +661,12 @@ class MiddlewareHTMLGenerator:
                     <button class="device-button active" data-width="100%">Desktop</button>
                 </div>
                 <div class="iframe-wrapper">
-                    <iframe class="content-frame" sandbox="allow-scripts" srcdoc="{escaped_base_html}" data-original-content="{escaped_base_html}"></iframe>
+                    <iframe
+                        class="content-frame"
+                        sandbox="allow-scripts"
+                        srcdoc="{escaped_base_html}"
+                        data-original-content="{escaped_base_html}"
+                    ></iframe>
                     <div class="resize-handle"></div>
                 </div>
             </div>
@@ -693,10 +698,8 @@ class MiddlewareHTMLGenerator:
         """
 
     @classmethod
-    def create_middleware_html(cls, pages):
-        content_items = "".join(
-            cls.generate_content_item(i, page) for i, page in enumerate(pages)
-        )
+    def create_middleware_html(cls, pages: list[dict]) -> str:
+        content_items = "".join(cls.generate_content_item(i, page) for i, page in enumerate(pages))
 
         return f"""
         <!DOCTYPE html>
@@ -761,46 +764,37 @@ class MiddlewareHTMLGenerator:
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(
-            default=0,
-            description="Priority level for the filter operations."
-        )
-        enabled: bool = Field(
-            default=True,
-            description="Enable/disable the artifacts filter"
-        )
+        priority: int = Field(default=0, description="Priority level for the filter operations.")
+        enabled: bool = Field(default=True, description="Enable/disable the artifacts filter")
 
     class UserValves(BaseModel):
-        show_status: bool = Field(
-            default=True,
-            description="Show status of artifact processing"
-        )
+        show_status: bool = Field(default=True, description="Show status of artifact processing")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.valves = self.Valves()
         self.viz_dir = "visualizations"
         self.html_dir = "html"
         self.middleware_file = "middleware.html"
-        self.current_artifact = None
+        self.current_artifact: Dict[str, str] = {}
 
-    def ensure_chat_directory(self, chat_id, content_type):
+    def ensure_chat_directory(self, chat_id: str, content_type: str) -> str:
         chat_dir = os.path.join(UPLOAD_DIR, self.viz_dir, content_type, chat_id)
         os.makedirs(chat_dir, exist_ok=True)
         return chat_dir
 
-    def extract_content(self, content, pattern):
+    def extract_content(self, content: str, pattern: str) -> List[str]:
         return re.findall(pattern, content, re.IGNORECASE | re.DOTALL)
 
-    def write_content_to_file(self, content, user_id, chat_id, content_type):
+    def write_content_to_file(self, content: str, user_id: str, chat_id: str, content_type: str) -> str:
         chat_dir = self.ensure_chat_directory(chat_id, content_type)
         filename = f"{content_type}_{uuid.uuid4()}.html"
         file_path = os.path.join(chat_dir, filename)
 
         with open(file_path, "w") as f:
             f.write(content)
-
         relative_path = os.path.join(self.viz_dir, content_type, chat_id, filename)
         file_form = FileForm(
+            path=file_path,
             id=str(uuid.uuid4()),
             filename=relative_path,
             meta={
@@ -810,9 +804,12 @@ class Filter:
                 "path": file_path,
             },
         )
-        return Files.insert_new_file(user_id, file_form).id
+        file = Files.insert_new_file(user_id, file_form)
+        if file is None:
+            raise ValueError("Failed to insert file")
+        return str(file.id)
 
-    def parse_content(self, content):
+    def parse_content(self, content: str) -> List[Dict[str, str]]:
         html_pattern = r"```(?:html|xml)\s*([\s\S]*?)\s*```"
         css_pattern = r"```css\s*([\s\S]*?)\s*```"
         js_pattern = r"```javascript\s*([\s\S]*?)\s*```"
@@ -823,8 +820,7 @@ class Filter:
         js_blocks = self.extract_content(content, js_pattern)
         standalone_svg_blocks = self.extract_content(content, svg_pattern)
 
-        if not self.current_artifact:
-            self.current_artifact = {"html": "", "css": "", "js": "", "raw_html": ""}
+        self.current_artifact = {"html": "", "css": "", "js": "", "raw_html": ""}
 
         if html_blocks:
             self.current_artifact["html"] = html_blocks[0]
@@ -842,14 +838,14 @@ class Filter:
 
         return [self.current_artifact] if any(self.current_artifact.values()) else []
 
-    def create_middleware_html(self, pages):
+    def create_middleware_html(self, pages: List[Dict[str, str]]) -> str:
         return MiddlewareHTMLGenerator.create_middleware_html(pages)
 
     def inlet(
         self,
         body: dict,
         __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
-        __user__: Optional[dict] = None
+        __user__: Optional[dict] = None,
     ) -> dict:
         return body
 
@@ -857,7 +853,7 @@ class Filter:
         self,
         body: dict,
         __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
-        __user__: Optional[dict] = None
+        __user__: Optional[dict] = None,
     ) -> dict:
         if not self.valves.enabled:
             return body
@@ -871,11 +867,8 @@ class Filter:
                     pages = self.parse_content(last_message)
 
                     if pages:
-                        await __event_emitter__.emit("status", {
-                            "message": "Creating artifact viewer...",
-                            "progress": 0,
-                            "done": False
-                        })
+                        if __event_emitter__:
+                            await __event_emitter__({"type": "status", "data": {"message": "Creating artifact viewer...", "progress": 0, "done": False}})
 
                         middleware_content = self.create_middleware_html(pages)
                         middleware_id = self.write_content_to_file(
@@ -887,11 +880,8 @@ class Filter:
 
                         body["messages"][-1]["content"] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
 
-                        await __event_emitter__.emit("status", {
-                            "message": "Artifact viewer ready",
-                            "progress": 100,
-                            "done": True
-                        })
+                        if __event_emitter__:
+                            await __event_emitter__({"type": "status", "data": {"message": "Artifact viewer ready", "progress": 100, "done": True}})
 
                 except Exception as e:
                     error_msg = f"Error processing content: {str(e)}\n{traceback.format_exc()}"
