@@ -1,7 +1,6 @@
 mypy==1.8.0
 flake8==7.0.0
 black==23.12.1
-types-aiohttp>=3.8.0
 pydantic>=2.0.0
 fastapi>=0.100.0
 aiohttp>=3.8.0
