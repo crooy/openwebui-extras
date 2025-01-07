@@ -18,8 +18,9 @@ title: Auto-memory
 original author: caplescrest
 author: crooy
 repo: https://github.com/crooy/opewebui-extras  --> feel free to contribute or submit issues
-version: 0.5-beta
+version: 0.6
 changelog:
+ - v0.6: all coded has been linted, formatted, and type-checked
  - v0.5-beta: Added memory operations (NEW/UPDATE/DELETE), improved code structure, added datetime handling
  - v0.4: Added LLM-based memory relevance, improved memory deduplication, better context handling
  - v0.3: migrated to openwebui v0.5, updated to use openai api by default
