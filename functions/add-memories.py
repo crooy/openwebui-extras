@@ -20,7 +20,7 @@ features:
 
 import os
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import aiohttp
 from open_webui.models.memories import Memories
@@ -48,12 +48,12 @@ class Action:
     class UserValves(BaseModel):
         show_status: bool = Field(default=True, description="Show status of memory processing")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.valves = self.Valves()
 
     async def query_openai_api(
         self,
-        messages: list,
+        messages: List[Dict[str, str]],
     ) -> str:
         """Query OpenAI API for conversation summary."""
         url = f"{self.valves.openai_api_url}/chat/completions"
@@ -84,7 +84,7 @@ class Action:
                 response = await session.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 json_content = await response.json()
-                return json_content["choices"][0]["message"]["content"]
+                return str(json_content["choices"][0]["message"]["content"])
         except Exception as e:
             print(f"Error getting summary: {e}")
             return ""

@@ -11,7 +11,9 @@ extend-ignore =
     # First argument of a method should be named 'self'
     N805,
     # Line break before binary operator
-    W503
+    W503,
+    # Whitespace before ':' in slices
+    E203
 per-file-ignores =
     # Ignore unused imports in __init__.py
     __init__.py:F401

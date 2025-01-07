@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Script to fetch and set up type stubs for OpenWebUI models."""
-import json
 import os
 import shutil
 import urllib.request
@@ -21,22 +20,8 @@ def download_file(url: str, target: str) -> None:
 
 
 def get_model_files(repo_url: str) -> List[str]:
-    """Get list of all Python files in the models directory."""
-    api_url = repo_url.replace("github.com", "api.github.com/repos") + "/contents/backend/open_webui/models"
-
-    try:
-        with urllib.request.urlopen(api_url) as response:
-            files = json.loads(response.read())
-            return [f["name"] for f in files if f["name"].endswith(".py")]
-    except Exception as e:
-        print(f"Error fetching file list: {e}, falling back to default files")
-        return [
-            "memories.py",
-            "users.py",
-            "conversations.py",
-            "settings.py",
-            "__init__.py",
-        ]
+    """Get list of required Python files."""
+    return ["memories.py", "users.py", "files.py"]
 
 
 def main() -> None:

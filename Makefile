@@ -16,6 +16,6 @@ lint:
 	flake8 .
 
 check:
-	mypy .
+	mypy functions pipelines tools
 
 all: setup-stubs format lint check

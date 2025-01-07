@@ -9,7 +9,7 @@ class Pipeline:
     class Valves(BaseModel):
         pass
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Optionally, you can set the id and name of the pipeline.
         # Best practice is to not specify the id so that it can be automatically inferred from the filename, so that users can install multiple versions of the same pipeline.
         # The identifier must be unique across all pipelines.
@@ -20,17 +20,23 @@ class Pipeline:
         # Initialize rate limits
         self.valves = self.Valves(**{"OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", "")})
 
-    async def on_startup(self):
+    async def on_startup(self) -> None:
         # This function is called when the server is started.
         print(f"on_startup:{__name__}")
         pass
 
-    async def on_shutdown(self):
+    async def on_shutdown(self) -> None:
         # This function is called when the server is stopped.
         print(f"on_shutdown:{__name__}")
         pass
 
-    def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> Union[str, Generator, Iterator]:
+    def pipe(
+        self,
+        user_message: str,
+        model_id: str,
+        messages: List[dict],
+        body: dict,
+    ) -> Union[str, Generator, Iterator]:
         # This is where you can add your custom pipelines like RAG.
         print(f"pipe:{__name__}")
 
@@ -38,7 +44,7 @@ class Pipeline:
             print("Title Generation")
             return "Wikipedia Pipeline"
         else:
-            titles = []
+            titles: List[str] = []
             for query in [user_message]:
                 query = query.replace(" ", "_")
 
