@@ -1,53 +1,59 @@
-"""
-title: Auto-memory
-original author: caplescrest
-author: crooy
-repo: https://github.com/crooy/opewebui-extras  --> feel free to contribute or submit issues
-version: 0.5-beta
-changelog:
- - v0.5-beta: Added memory operations (NEW/UPDATE/DELETE), improved code structure, added datetime handling
- - v0.4: Added LLM-based memory relevance, improved memory deduplication, better context handling
- - v0.3: migrated to openwebui v0.5, updated to use openai api by default
- - v0.2: checks existing memories to update them if needed instead of continually adding memories.
-to do:
- - offer confirmation before adding
- - consider more of chat history when making a memory
- - fine-tune memory relevance thresholds
- - improve memory tagging system, also for filtering relevant memories
- - maybe add support for vector-database for storing memories
- - maybe there should be an action to archive a chat, but summarize it's conclusions and store it as a memory, although it would be more of a logbook than an personal memory
-"""
+"""Auto-memory filter for OpenWebUI"""
+import json
+import os
+import time
+import traceback
+import uuid
+from datetime import datetime
+from typing import Any, Awaitable, Callable, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Callable, Awaitable, Any, Literal, Union
 import aiohttp
 from aiohttp import ClientError
-from fastapi.requests import Request
 from open_webui.models.memories import Memories, MemoryModel
 from open_webui.models.users import Users
-import ast
-import json
-import time
-import uuid
-import traceback
+from pydantic import BaseModel, Field
+
+
+class MemoryOperation(BaseModel):
+    """Model for memory operations"""
+    operation: Literal["NEW", "UPDATE", "DELETE"]
+    id: Optional[str] = None
+    content: Optional[str] = None
+    tags: List[str] = []
+
+    def validate(self) -> bool:
+        """Validate the operation has required fields"""
+        if self.operation in ["UPDATE", "DELETE"] and not self.id:
+            return False
+        if self.operation in ["NEW", "UPDATE"] and not self.content:
+            return False
+        return True
 
 
 class Filter:
+    """Auto-memory filter class"""
     class Valves(BaseModel):
+        """Configuration valves for the filter"""
         openai_api_url: str = Field(
             default="https://api.openai.com/v1",
             description="OpenAI API endpoint",
         )
-        openai_api_key: str = Field(default="", description="OpenAI API key")
+        openai_api_key: str = Field(
+            default=os.getenv("OPENAI_API_KEY", ""),
+            description="OpenAI API key"
+        )
         model: str = Field(
             default="gpt-3.5-turbo",
             description="OpenAI model to use for memory processing",
         )
         related_memories_n: int = Field(
             default=10,
-            description="Number of related memories to consider when updating memories",
+            description="Number of related memories to consider",
         )
-        enabled: bool = Field(default=True, description="Enable/disable the auto-memory filter")
+        enabled: bool = Field(
+            default=True,
+            description="Enable/disable the auto-memory filter"
+        )
 
     class UserValves(BaseModel):
         show_status: bool = Field(default=True, description="Show status of memory processing")
@@ -472,18 +478,3 @@ Example response for question "When is my restaurant in NYC open?"
             print(f"Error getting relevant memories: {e}\n")
             print(f"Error traceback: {traceback.format_exc()}\n")
             return []
-
-
-class MemoryOperation(BaseModel):
-    operation: Literal["NEW", "UPDATE", "DELETE"]
-    id: Optional[str] = None
-    content: Optional[str] = None
-    tags: List[str] = []
-
-    def validate(self) -> bool:
-        """Validate the operation has required fields"""
-        if self.operation in ["UPDATE", "DELETE"] and not self.id:
-            return False
-        if self.operation in ["NEW", "UPDATE"] and not self.content:
-            return False
-        return True
