@@ -7,12 +7,12 @@ Changes:
 - Enhanced CSS styles for better responsiveness, including mobile, tablet, and desktop buttons.
 - Improved script functionality for handling multiple artifacts and toggling between views.
 
-author: open-webui, helloworldwastaken, atgehrhardt, tokyohouseparty
-author_url:https://github.com/helloworldxdwastaken
-orignal_coder_author_url: https://github.com/atgehrhardt
+author: open-webui, helloworldwastaken, atgehrhardt, tokyohouseparty, crooy
+author_url: https://github.com/crooy/openwebui-extras
+orignal_coder_author_url: https://github.com/atgehrhardt and https://github.com/helloworldxdwastaken
 
 funding_url: https://github.com/open-webui
-version: 3.0.0
+version: 3.1.0
 required_open_webui_version: 0.5 or above
 """
 
@@ -21,7 +21,7 @@ import os
 import re
 import traceback
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 
 from open_webui.config import UPLOAD_DIR
 from open_webui.models.files import FileForm, Files
@@ -844,7 +844,7 @@ class Filter:
     def inlet(
         self,
         body: dict,
-        __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
         __user__: Optional[dict] = None,
     ) -> dict:
         return body
@@ -852,7 +852,7 @@ class Filter:
     async def outlet(
         self,
         body: dict,
-        __event_emitter__: Optional[Callable[[Any], Awaitable[None]]] = None,
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
         __user__: Optional[dict] = None,
     ) -> dict:
         if not self.valves.enabled:
@@ -868,7 +868,7 @@ class Filter:
 
                     if pages:
                         if __event_emitter__:
-                            await __event_emitter__({"type": "status", "data": {"message": "Creating artifact viewer...", "progress": 0, "done": False}})
+                            await __event_emitter__({"type": "status", "data": {"description": "Creating artifact viewer...", "done": False}})
 
                         middleware_content = self.create_middleware_html(pages)
                         middleware_id = self.write_content_to_file(
@@ -881,7 +881,7 @@ class Filter:
                         body["messages"][-1]["content"] += f"\n\n{{{{HTML_FILE_ID_{middleware_id}}}}}"
 
                         if __event_emitter__:
-                            await __event_emitter__({"type": "status", "data": {"message": "Artifact viewer ready", "progress": 100, "done": True}})
+                            await __event_emitter__({"type": "status", "data": {"description": "Artifact viewer ready", "done": True}})
 
                 except Exception as e:
                     error_msg = f"Error processing content: {str(e)}\n{traceback.format_exc()}"
