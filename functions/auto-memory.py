@@ -2,7 +2,6 @@
 """
 
 import json
-import os
 import traceback
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Set
@@ -76,36 +75,53 @@ class Filter:
         show_status: bool = Field(default=True, description="Show status of memory processing")
 
     SYSTEM_PROMPT = """
-    You are a memory manager. Analyze the user's message and existing memories to determine necessary operations.
+    You are a memory manager. Analyze the user's message and existing memories to return ONLY valid JSON array of memory operations.
+    Only find things that are relevant for building a profile of the user.
+
+    Examples of relevant information:
+    - User likes to have a joke in a conversation
+    - User is a software developer
+
+    Examples of irrelevant information, which must not be stored:
+    - User asks to draw a cat
+    - User mentions a joke
 
     Rules:
-    1. UPDATE if new information modifies existing memory (e.g. address change, preference update)
-    2. GROUP related memories (e.g. combine "likes coffee" and "prefers lattes" into single memory)
-    3. DELETE only if information is contradicted or obsolete
-    4. NEW for completely novel information
+    1. UPDATE if new information modifies existing memory
+    2. GROUP related memories into single operation
+    3. DELETE for contradicted/obsolete info, or memories that should be removed from the profile
+    4. NEW for novel information
+    5. Return ONLY JSON array - no explanations
+    6. Output must be parseable JSON
 
-    Memory Format:
+    Format:
     [
         {
             "operation": "NEW|UPDATE|DELETE",
             "id": "required_for_update_delete",
-            "content": "full context with details",
-            "tags": ["category", "specifics"]
+            "content": "concise details",
+            "tags": ["category"]
         }
     ]
 
     Examples:
-    User: "I now prefer almond milk over regular milk"
-    Existing: [{"id": "123", "content": "User drinks milk daily", "tags": ["diet"]}]
-    → [{"operation": "UPDATE", "id": "123", "content": "User prefers almond milk instead of regular milk", "tags": ["diet", "preferences"]}]
+    User: "I prefer almond milk now"
+    Existing: [{"id": "123", "content": "Drinks milk daily", "tags": ["diet"]}]
+    Output:
+    [{
+        "operation": "UPDATE",
+        "id": "123",
+        "content": "Prefers almond milk instead of regular",
+        "tags": ["diet", "preferences"]
+    }]
 
-    User: "My coffee order is a double shot latte with oat milk"
-    Existing: [
-        {"id": "456", "content": "User likes lattes", "tags": ["coffee"]},
-        {"id": "789", "content": "User prefers oat milk", "tags": ["diet"]}
-    ]
-    → [{"operation": "UPDATE", "id": "456", "content": "User's standard coffee order: double shot latte with oat milk", "tags": ["coffee", "preferences"]}]
-
+    User: "Coffee order: double shot latte with oat milk"
+    Output:
+    [{
+        "operation": "NEW",
+        "content": "Standard coffee order: double shot latte with oat milk",
+        "tags": ["beverage", "preferences"]
+    }]
     """
 
     def __init__(self) -> None:
@@ -156,11 +172,18 @@ class Filter:
         if not body or not isinstance(body, dict) or not __user__:
             return body
 
+        # Skip memory processing for temporary chats (no chat_id)
+        chat_id = body.get("chat_id")
+        if not chat_id:
+            return body
+
         try:
             if "messages" in body and body["messages"]:
                 user_messages = [m for m in body["messages"] if m["role"] == "user"]
                 if user_messages:
                     user = Users.get_user_by_id(__user__["id"])
+                    if not user:
+                        return body
                     memory_context, relevant_memories = await self._process_user_message(user_messages[-1]["content"], __user__["id"], user)
                     self._update_message_context(body, memory_context, relevant_memories)
         except Exception as e:
@@ -175,6 +198,11 @@ class Filter:
         __user__: Optional[dict] = None,
     ) -> dict:
         if not self.valves.enabled:
+            return body
+
+        # Skip memory confirmation for temporary chats (no chat_id)
+        chat_id = body.get("chat_id")
+        if not chat_id:
             return body
 
         # Add memory storage confirmation if memories were stored
@@ -213,15 +241,11 @@ class Filter:
         """Improved memory identification with structured context"""
         try:
 
-            print(f"\n input_text: {input_text}\n")
-
             # Get existing memories with IDs
             existing = [
                 f"ID: {mem.id} | Content: {mem.content} | Tags: {', '.join(self._parse_memory_tags(mem.content))}"
                 for mem in Memories.get_memories_by_user_id(user.id)
             ][:10]  # Limit to recent 10 for context
-
-            print(f"\n existing: {existing}\n")
 
             promptAddendum = """
 
@@ -238,8 +262,6 @@ class Filter:
                 existing_memories="\n".join(existing) if existing else "No existing memories",
                 user_input=input_text
             )
-
-            print(f"\n prompt: {prompt}\n")
 
             # Get and validate response
             response = await self.query_openai_api(self.valves.model, prompt, input_text, user)
@@ -355,44 +377,6 @@ class Filter:
         if not operation.tags:
             return operation.content or ""
         return f"[Tags: {', '.join(operation.tags)}] {operation.content}"
-
-    async def store_memory(
-        self,
-        memory: str,
-        user: Any,
-    ) -> str:
-        try:
-            # Validate inputs
-            if not memory or not user:
-                return "Invalid input parameters"
-
-            print(f"Processing memory: {memory}\n")
-            print(f"For user: {getattr(user, 'id', 'Unknown')}\n")
-
-            # Insert memory using correct method signature
-            try:
-                result = Memories.insert_new_memory(user_id=str(user.id), content=str(memory))
-                print(f"Memory insertion result: {result}\n")
-
-            except Exception as e:
-                print(f"Memory insertion failed: {e}\n")
-                return f"Failed to insert memory: {e}"
-
-            # Get existing memories by user ID (non-critical)
-            try:
-                existing_memories = Memories.get_memories_by_user_id(user_id=str(user.id))
-                if existing_memories:
-                    print(f"Found {len(existing_memories)} existing memories\n")
-            except Exception as e:
-                print(f"Failed to get existing memories: {e}\n")
-                # Continue anyway as this is not critical
-
-            return "Success"
-
-        except Exception as e:
-            print(f"Error in store_memory: {e}\n")
-            print(f"Full error traceback: {traceback.format_exc()}\n")
-            return f"Error storing memory: {e}"
 
     async def get_relevant_memories(self, current_message: str, user: Any) -> List[str]:
         """Tag-based relevance with LLM tag matching"""
