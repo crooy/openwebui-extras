@@ -1,0 +1,1680 @@
+import asyncio
+import json
+import logging
+import re
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+
+import aiohttp
+import numpy as np
+from open_webui.constants import TASKS
+from open_webui.models.users import User
+from open_webui.utils.chat import generate_chat_completion
+from pydantic import BaseModel, Field
+from sklearn.metrics.pairwise import cosine_similarity
+
+name = "DeepResearch"
+
+
+def setup_logger():
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        logger.setLevel(logging.DEBUG)
+        handler = logging.StreamHandler()
+        handler.set_name(name)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.propagate = False
+    return logger
+
+
+logger = setup_logger()
+
+
+class Pipe:
+    __current_event_emitter__: Callable[[dict], Awaitable[None]]
+    __user__: User
+    __model__: str
+
+    class Valves(BaseModel):
+        ENABLED: bool = Field(
+            default=True,
+            description="Enable Deep Research pipe",
+        )
+        LARGE_MODEL: str = Field(
+            default="gemma3:12b",
+            description="Model for generating research queries and synthesizing results",
+        )
+        SYNTHESIS_MODEL: str = Field(
+            default="",
+            description="Optional separate model for final synthesis (leave empty to use LARGE_MODEL)",
+        )
+        EMBEDDING_MODEL: str = Field(
+            default="granite-embedding:30m",
+            description="Model for semantic comparison of content",
+        )
+        MAX_CYCLES: int = Field(
+            default=10,
+            description="Maximum number of research cycles before terminating",
+            ge=3,
+            le=50,
+        )
+        MIN_CYCLES: int = Field(
+            default=5,
+            description="Minimum number of research cycles to perform",
+            ge=1,
+            le=10,
+        )
+        SEARCH_RESULTS_PER_QUERY: int = Field(
+            default=3,
+            description="Number of search results to try per query",
+            ge=1,
+            le=10,
+        )
+        SUCCESSFUL_RESULTS_PER_QUERY: int = Field(
+            default=1,
+            description="Number of successful results to keep per query",
+            ge=1,
+            le=5,
+        )
+        CHUNK_LEVEL: int = Field(
+            default=2,
+            description="Level of chunking (1=phrase, 2=sentence, 3=paragraph, 4+=multi-paragraph)",
+            ge=1,
+            le=10,
+        )
+        COMPRESSION_LEVEL: int = Field(
+            default=5,
+            description="Level of compression (1=minimal, 10=maximum)",
+            ge=1,
+            le=10,
+        )
+        QUERY_WEIGHT: float = Field(
+            default=0.5,
+            description="Weight to give query similarity vs document relevance (0.0-1.0)",
+            ge=0.0,
+            le=1.0,
+        )
+        TEMPERATURE: float = Field(
+            default=0.7, description="Temperature for generation", ge=0.0, le=2.0
+        )
+        SYNTHESIS_TEMPERATURE: float = Field(
+            default=0.6, description="Temperature for final synthesis", ge=0.0, le=2.0
+        )
+        OLLAMA_URL: str = Field(
+            default="http://localhost:11434", description="URL for Ollama API"
+        )
+        SEARCH_URL: str = Field(
+            default="http://192.168.1.1:8888/search?q=",
+            description="URL for web search API",
+        )
+        MAX_FAILED_RESULTS: int = Field(
+            default=3,
+            description="Maximum number of failed results before abandoning a query",
+            ge=1,
+            le=10,
+        )
+        EXTRACT_CONTENT_ONLY: bool = Field(
+            default=True,
+            description="Extract only text content from HTML, removing scripts, styles, etc.",
+        )
+        PDF_MAX_PAGES: int = Field(
+            default=50,
+            description="Maximum number of pages to extract from a PDF",
+            ge=5,
+            le=500,
+        )
+        HANDLE_PDFS: bool = Field(
+            default=True,
+            description="Enable processing of PDF files",
+        )
+
+    def __init__(self):
+        self.type = "manifold"
+        self.valves = self.Valves()
+
+    def pipes(self) -> list[dict[str, str]]:
+        return [{"id": f"{name}-pipe", "name": f"{name} Pipe"}]
+
+    async def get_embedding(self, text: str) -> Optional[List[float]]:
+        """Get embedding for a text string using the configured embedding model"""
+        if not text or not text.strip():
+            return None
+
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "model": self.valves.EMBEDDING_MODEL,
+                "prompt": text,
+            }
+
+            try:
+                async with session.post(
+                    f"{self.valves.OLLAMA_URL}/api/embeddings", json=payload, timeout=30
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        embedding = result.get("embedding", [])
+                        if embedding:
+                            return embedding
+            except Exception as e:
+                logger.error(f"Error getting embedding: {e}")
+
+        return None
+
+    def chunk_text(self, text: str) -> List[str]:
+        """Split text into chunks based on the configured chunk level"""
+        chunk_level = self.valves.CHUNK_LEVEL
+
+        # If no chunking requested, return the whole text as a single chunk
+        if chunk_level <= 0:
+            return [text]
+
+        # Level 1: Phrase-level chunking (split by commas, colons, semicolons)
+        if chunk_level == 1:
+            # Split by commas, colons, semicolons that are followed by a space
+            # First split by newlines to maintain paragraph structure
+            paragraphs = text.split("\n")
+
+            # Then split each paragraph by phrases
+            chunks = []
+            for paragraph in paragraphs:
+                if not paragraph.strip():
+                    continue
+
+                # Split paragraph into phrases
+                paragraph_phrases = re.split(r"(?<=[,;:])\s+", paragraph)
+                # Only add non-empty phrases
+                for phrase in paragraph_phrases:
+                    if phrase.strip():
+                        chunks.append(phrase.strip())
+
+            return chunks
+
+        # Level 2: Sentence-level chunking (split by periods, exclamation, question marks)
+        if chunk_level == 2:
+            # Improved sentence splitting that preserves document structure
+            # First split by paragraphs
+            paragraphs = text.split("\n")
+
+            chunks = []
+            for paragraph in paragraphs:
+                if not paragraph.strip():
+                    continue
+
+                # Split paragraph into sentences
+                sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+                # Only add non-empty sentences
+                for sentence in sentences:
+                    if sentence.strip():
+                        chunks.append(sentence.strip())
+
+            return chunks
+
+        # Level 3: Paragraph-level chunking
+        paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+
+        if chunk_level == 3:
+            return paragraphs
+
+        # Level 4-10: Multi-paragraph chunking (4=2 paragraphs, 5=3 paragraphs, etc.)
+        chunks = []
+        # Calculate how many paragraphs per chunk (chunk_level 4 = 2 paragraphs, 5 = 3 paragraphs, etc.)
+        paragraphs_per_chunk = chunk_level - 2
+
+        for i in range(0, len(paragraphs), paragraphs_per_chunk):
+            chunk = "\n".join(paragraphs[i : i + paragraphs_per_chunk])
+            chunks.append(chunk)
+
+        return chunks
+
+    async def compress_content(self, content: str, query_embedding: List[float]) -> str:
+        """Apply semantic compression to content based on chunk level and compression level"""
+        chunk_level = self.valves.CHUNK_LEVEL
+        compression_level = self.valves.COMPRESSION_LEVEL
+        query_weight = self.valves.QUERY_WEIGHT
+
+        # Skip compression for very short content
+        if len(content) < 100:
+            return content
+
+        # Split content into chunks based on chunk_level
+        chunks = self.chunk_text(content)
+
+        # Skip compression if only one chunk
+        if len(chunks) <= 1:
+            return content
+
+        # Get embeddings for chunks
+        chunk_embeddings = []
+        for chunk in chunks:
+            embedding = await self.get_embedding(chunk)
+            if embedding:
+                chunk_embeddings.append(embedding)
+
+        # Skip compression if not enough embeddings
+        if len(chunk_embeddings) <= 1:
+            return content
+
+        # Define compression ratios - how much of the original to keep
+        compress_ratios = {
+            1: 0.9,  # 90% - minimal compression
+            2: 0.8,  # 80%
+            3: 0.7,  # 70%
+            4: 0.6,  # 60%
+            5: 0.5,  # 50% - moderate compression
+            6: 0.4,  # 40%
+            7: 0.3,  # 30%
+            8: 0.2,  # 20%
+            9: 0.15,  # 15%
+            10: 0.1,  # 10% - maximum compression
+        }
+
+        # Get compression ratio
+        ratio = compress_ratios.get(compression_level, 0.5)
+
+        # Calculate how many chunks to keep
+        n_chunks = len(chunk_embeddings)
+        n_keep = max(1, min(n_chunks - 1, int(n_chunks * ratio)))
+
+        # Ensure we're compressing at least a little
+        if n_keep >= n_chunks:
+            n_keep = max(1, n_chunks - 1)
+
+        try:
+            # Convert embeddings to numpy array
+            embeddings_array = np.array(chunk_embeddings)
+
+            # Calculate document centroid - the "average" meaning of the document
+            document_centroid = np.mean(embeddings_array, axis=0)
+
+            # Calculate importance score for each chunk
+            importance_scores = []
+            for i, embedding in enumerate(embeddings_array):
+                # Fix any NaN or Inf values
+                if np.isnan(embedding).any() or np.isinf(embedding).any():
+                    embedding = np.nan_to_num(
+                        embedding, nan=0.0, posinf=1.0, neginf=-1.0
+                    )
+
+                # Calculate similarity to document centroid
+                doc_similarity = cosine_similarity([embedding], [document_centroid])[0][
+                    0
+                ]
+
+                # Calculate similarity to query
+                query_similarity = cosine_similarity([embedding], [query_embedding])[0][
+                    0
+                ]
+
+                # Weight the scores
+                doc_weight = 1.0 - query_weight
+                final_score = (doc_similarity * doc_weight) + (
+                    query_similarity * query_weight
+                )
+
+                importance_scores.append((i, final_score))
+
+            # Sort chunks by importance (most important first)
+            importance_scores.sort(key=lambda x: x[1], reverse=True)
+
+            # Select the top n_keep most important chunks
+            selected_indices = [x[0] for x in importance_scores[:n_keep]]
+
+            # Sort indices to maintain original document order
+            selected_indices.sort()
+
+            # Get the selected chunks
+            selected_chunks = [chunks[i] for i in selected_indices if i < len(chunks)]
+
+            # Join compressed chunks back into text with proper formatting
+            if chunk_level == 1:  # Phrase level
+                # Join with spaces, not commas
+                compressed_content = " ".join(selected_chunks)
+            elif chunk_level == 2:  # Sentence level
+                # Join with spaces and periods if needed
+                processed_sentences = []
+                for sentence in selected_chunks:
+                    # Make sure sentence ends with period if it doesn't have ending punctuation
+                    if not sentence.endswith((".", "!", "?", ":", ";")):
+                        sentence += "."
+                    processed_sentences.append(sentence)
+
+                compressed_content = " ".join(processed_sentences)
+            else:  # Paragraph levels
+                # Join with newlines
+                compressed_content = "\n".join(selected_chunks)
+
+            return compressed_content
+
+        except Exception as e:
+            logger.error(f"Error during compression: {e}")
+            return content
+
+    async def _try_openwebui_search(self, query: str) -> List[Dict]:
+        """Try to use Open WebUI's built-in search functionality"""
+        try:
+            from open_webui.routers.retrieval import (SearchForm,
+                                                      process_web_search)
+
+            # Create a search form with the query
+            search_form = SearchForm(query=query)
+
+            # Call the search function
+            logger.debug(f"Executing built-in search with query: {query}")
+
+            # Set a timeout for this operation
+            search_task = asyncio.create_task(
+                process_web_search(self.__request__, search_form, user=self.__user__)
+            )
+            search_results = await asyncio.wait_for(search_task, timeout=15.0)
+
+            logger.debug(f"Search results received: {type(search_results)}")
+            results = []
+
+            # Process the results
+            if search_results:
+                if "docs" in search_results:
+                    # Extract information from search results
+                    docs = search_results.get("docs", [])
+                    urls = search_results.get("filenames", [])
+
+                    logger.debug(f"Found {len(docs)} documents in search results")
+
+                    # Create a result object for each document
+                    for i, doc in enumerate(
+                        docs[: self.valves.SEARCH_RESULTS_PER_QUERY]
+                    ):
+                        url = urls[i] if i < len(urls) else ""
+                        results.append(
+                            {
+                                "title": f"Search Result for '{query}'",
+                                "url": url,
+                                "snippet": doc,
+                            }
+                        )
+                elif "collection_name" in search_results:
+                    # For collection-based results
+                    collection_name = search_results.get("collection_name")
+                    urls = search_results.get("filenames", [])
+
+                    logger.debug(
+                        f"Found collection {collection_name} with {len(urls)} documents"
+                    )
+
+                    for i, url in enumerate(
+                        urls[: self.valves.SEARCH_RESULTS_PER_QUERY]
+                    ):
+                        results.append(
+                            {
+                                "title": f"Search Result {i+1} from {collection_name}",
+                                "url": url,
+                                "snippet": f"Result from collection: {collection_name}",
+                            }
+                        )
+
+            return results
+
+        except asyncio.TimeoutError:
+            logger.error(f"OpenWebUI search timed out for query: {query}")
+            return []
+        except Exception as e:
+            logger.error(f"Error in _try_openwebui_search: {str(e)}")
+            return []
+
+    async def _fallback_search(self, query: str) -> List[Dict]:
+        """Fallback search method using direct HTTP request to search API"""
+        try:
+            # URL encode the query for safer search
+            from urllib.parse import quote
+
+            encoded_query = quote(query)
+            search_url = f"{self.valves.SEARCH_URL}{encoded_query}"
+
+            logger.debug(f"Using fallback search with URL: {search_url}")
+
+            async with aiohttp.ClientSession() as session:
+                # Set a timeout for this request
+                async with session.get(search_url, timeout=15.0) as response:
+                    if response.status == 200:
+                        search_json = await response.json()
+                        results = []
+
+                        if isinstance(search_json, list):
+                            for i, item in enumerate(
+                                search_json[: self.valves.SEARCH_RESULTS_PER_QUERY]
+                            ):
+                                results.append(
+                                    {
+                                        "title": item.get("title", f"Result {i+1}"),
+                                        "url": item.get("url", ""),
+                                        "snippet": item.get("snippet", ""),
+                                    }
+                                )
+                        elif isinstance(search_json, dict) and "results" in search_json:
+                            for i, item in enumerate(
+                                search_json["results"][
+                                    : self.valves.SEARCH_RESULTS_PER_QUERY
+                                ]
+                            ):
+                                results.append(
+                                    {
+                                        "title": item.get("title", f"Result {i+1}"),
+                                        "url": item.get("url", ""),
+                                        "snippet": item.get("snippet", ""),
+                                    }
+                                )
+
+                        return results
+                    else:
+                        logger.error(
+                            f"Fallback search returned status code {response.status}"
+                        )
+                        return []
+        except asyncio.TimeoutError:
+            logger.error(f"Fallback search timed out for query: {query}")
+            return []
+        except Exception as e:
+            logger.error(f"Error in fallback search: {str(e)}")
+            return []
+
+    async def search_web(self, query: str) -> List[Dict]:
+        """Perform web search with fallbacks"""
+        logger.debug(f"Starting web search for query: {query}")
+
+        # First try OpenWebUI search
+        results = await self._try_openwebui_search(query)
+
+        # If that failed, try fallback search
+        if not results:
+            logger.debug(
+                f"OpenWebUI search returned no results, trying fallback search for: {query}"
+            )
+            results = await self._fallback_search(query)
+
+        # If we got results, return them
+        if results:
+            logger.debug(
+                f"Search successful, found {len(results)} results for: {query}"
+            )
+            return results
+
+        # No results - create a minimal result
+        logger.warning(f"No search results found for query: {query}")
+        return [
+            {
+                "title": f"No results for '{query}'",
+                "url": "",
+                "snippet": f"No search results were found for the query: {query}",
+            }
+        ]
+
+    async def extract_text_from_html(self, html_content: str) -> str:
+        """Extract meaningful text content from HTML"""
+        try:
+            # Quick regex extraction first
+            import re
+
+            # Remove script and style tags
+            content = re.sub(
+                r"<script[^>]*>.*?</script>", " ", html_content, flags=re.DOTALL
+            )
+            content = re.sub(r"<style[^>]*>.*?</style>", " ", content, flags=re.DOTALL)
+            content = re.sub(r"<head[^>]*>.*?</head>", " ", content, flags=re.DOTALL)
+
+            # Remove HTML tags
+            content = re.sub(r"<[^>]*>", " ", content)
+
+            # Cleanup whitespace
+            content = re.sub(r"\s+", " ", content).strip()
+
+            # Try BeautifulSoup if available
+            try:
+                from bs4 import BeautifulSoup
+
+                # Create a task for BS4 extraction
+                def extract_with_bs4():
+                    soup = BeautifulSoup(html_content, "html.parser")
+                    for element in soup(
+                        ["script", "style", "head", "iframe", "noscript"]
+                    ):
+                        element.decompose()
+                    text = soup.get_text()
+                    lines = (line.strip() for line in text.splitlines())
+                    chunks = (
+                        phrase.strip() for line in lines for phrase in line.split("  ")
+                    )
+                    return "\n".join(chunk for chunk in chunks if chunk)
+
+                # Run in executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                bs4_extraction_task = loop.run_in_executor(None, extract_with_bs4)
+                bs4_result = await asyncio.wait_for(bs4_extraction_task, timeout=5.0)
+
+                # If BS4 extraction gave substantial content, use it
+                if bs4_result and len(bs4_result) > len(content) * 0.5:
+                    return bs4_result
+
+                # Otherwise fall back to the regex version
+                return content
+
+            except (ImportError, asyncio.TimeoutError, Exception):
+                # Use regex version if BS4 fails
+                return content
+
+        except Exception as e:
+            logger.error(f"Error extracting text from HTML: {e}")
+            # Simple fallback - remove all HTML tags
+            try:
+                import re
+
+                return re.sub(r"<[^>]*>", " ", html_content)
+            except:
+                return html_content
+
+    async def fetch_content(self, url: str) -> str:
+        """Fetch content from a URL using Open WebUI's functionality if possible"""
+        try:
+            # Try to use Open WebUI's fetch functionality if available
+            try:
+                from open_webui.routers.retrieval import fetch_url
+
+                logger.debug(f"Using Open WebUI to fetch URL: {url}")
+                fetch_task = asyncio.create_task(fetch_url(url))
+                content = await asyncio.wait_for(fetch_task, timeout=20.0)
+
+                if content:
+                    # Check if this is a PDF by examining content
+                    if content.startswith(b"%PDF") or (
+                        isinstance(content, str) and content.startswith("%PDF")
+                    ):
+                        logger.info(f"Detected PDF content from URL: {url}")
+                        return await self.extract_text_from_pdf(content)
+
+                    # If extract_content_only is true, extract just the text
+                    if (
+                        self.valves.EXTRACT_CONTENT_ONLY
+                        and isinstance(content, str)
+                        and content.strip().startswith("<")
+                    ):
+                        extracted = await self.extract_text_from_html(content)
+                        return extracted
+                    return content
+            except (ImportError, AttributeError, asyncio.TimeoutError) as e:
+                # Fall back to direct fetch
+                logger.warning(f"Open WebUI fetch failed, using direct fetch: {e}")
+                pass
+
+            # Direct fetch as fallback
+            logger.debug(f"Using direct fetch for URL: {url}")
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml,application/pdf;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                }
+
+                # Check if URL appears to be a PDF
+                is_pdf = url.lower().endswith(".pdf")
+
+                if is_pdf:
+                    # Use binary mode for PDFs
+                    async with session.get(
+                        url, headers=headers, timeout=20.0
+                    ) as response:
+                        if response.status == 200:
+                            # Get PDF content as bytes
+                            pdf_content = await response.read()
+                            return await self.extract_text_from_pdf(pdf_content)
+                else:
+                    # Normal text/HTML mode
+                    async with session.get(
+                        url, headers=headers, timeout=20.0
+                    ) as response:
+                        if response.status == 200:
+                            # Check content type in response headers
+                            content_type = response.headers.get(
+                                "Content-Type", ""
+                            ).lower()
+
+                            if "application/pdf" in content_type:
+                                # This is a PDF even though the URL didn't end with .pdf
+                                pdf_content = await response.read()
+                                return await self.extract_text_from_pdf(pdf_content)
+
+                            # Handle as normal HTML/text
+                            content = await response.text()
+                            if (
+                                self.valves.EXTRACT_CONTENT_ONLY
+                                and content.strip().startswith("<")
+                            ):
+                                extracted = await self.extract_text_from_html(content)
+                                return extracted
+                            return content
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout fetching content from {url}")
+            return f"Timeout while fetching content from {url}"
+        except Exception as e:
+            logger.error(f"Error fetching content from {url}: {e}")
+            return f"Error fetching content: {str(e)}"
+
+    async def extract_text_from_pdf(self, pdf_content) -> str:
+        """Extract text from PDF content using PyPDF2 or pdfplumber"""
+        if not self.valves.HANDLE_PDFS:
+            return "PDF processing is disabled in settings."
+
+        # Ensure we have bytes for the PDF content
+        if isinstance(pdf_content, str):
+            if pdf_content.startswith("%PDF"):
+                pdf_content = pdf_content.encode("utf-8", errors="ignore")
+            else:
+                return "Error: Invalid PDF content format"
+
+        # Limit extraction to configured max pages to avoid too much processing
+        max_pages = self.valves.PDF_MAX_PAGES
+
+        try:
+            # Try PyPDF2 first
+            try:
+                import io
+
+                from PyPDF2 import PdfReader
+
+                # Create a reader object
+                pdf_file = io.BytesIO(pdf_content)
+                pdf_reader = PdfReader(pdf_file)
+
+                # Get the total number of pages
+                num_pages = len(pdf_reader.pages)
+                logger.info(f"PDF has {num_pages} pages, extracting up to {max_pages}")
+
+                # Extract text from each page up to the limit
+                text = []
+                for page_num in range(min(num_pages, max_pages)):
+                    try:
+                        page = pdf_reader.pages[page_num]
+                        page_text = page.extract_text() or ""
+                        if page_text.strip():
+                            text.append(f"Page {page_num + 1}:\n{page_text}")
+                    except Exception as e:
+                        logger.warning(f"Error extracting page {page_num}: {e}")
+
+                # Join all pages with spacing
+                full_text = "\n\n".join(text)
+
+                if full_text.strip():
+                    logger.info(
+                        f"Successfully extracted text from PDF using PyPDF2: {len(full_text)} chars"
+                    )
+                    # Add a note if we limited the page count
+                    if num_pages > max_pages:
+                        full_text += f"\n\n[Note: This PDF has {num_pages} pages, but only the first {max_pages} were processed.]"
+                    return full_text
+                else:
+                    logger.warning(
+                        "PyPDF2 extraction returned empty text, trying pdfplumber..."
+                    )
+            except (ImportError, Exception) as e:
+                logger.warning(f"PyPDF2 extraction failed: {e}, trying pdfplumber...")
+
+            # Try pdfplumber as a fallback
+            try:
+                import io
+
+                import pdfplumber
+
+                pdf_file = io.BytesIO(pdf_content)
+                with pdfplumber.open(pdf_file) as pdf:
+                    # Get total pages
+                    num_pages = len(pdf.pages)
+
+                    text = []
+                    for i, page in enumerate(pdf.pages[:max_pages]):
+                        try:
+                            page_text = page.extract_text() or ""
+                            if page_text.strip():
+                                text.append(f"Page {i + 1}:\n{page_text}")
+                        except Exception as page_error:
+                            logger.warning(
+                                f"Error extracting page {i} with pdfplumber: {page_error}"
+                            )
+
+                full_text = "\n\n".join(text)
+
+                if full_text.strip():
+                    logger.info(
+                        f"Successfully extracted text from PDF using pdfplumber: {len(full_text)} chars"
+                    )
+                    # Add a note if we limited the page count
+                    if num_pages > max_pages:
+                        full_text += f"\n\n[Note: This PDF has {num_pages} pages, but only the first {max_pages} were processed.]"
+                    return full_text
+                else:
+                    logger.warning("pdfplumber extraction returned empty text")
+            except (ImportError, Exception) as e:
+                logger.warning(f"pdfplumber extraction failed: {e}")
+
+            # If both methods failed but we can tell it's a PDF, provide a more useful message
+            if pdf_content.startswith(b"%PDF"):
+                logger.warning(
+                    "PDF detected but text extraction failed. May be scanned or encrypted."
+                )
+                return "This appears to be a PDF document, but text extraction failed. The PDF may contain scanned images rather than text, or it may be encrypted/protected."
+
+            return "Could not extract text from PDF. The file may not be a valid PDF or may contain security restrictions."
+
+        except Exception as e:
+            logger.error(f"PDF text extraction failed: {e}")
+            return f"Error extracting text from PDF: {str(e)}"
+
+    async def sanitize_query(self, query: str) -> str:
+        """Sanitize search query by removing quotes and handling special characters"""
+        # Remove quotes that might cause problems with search engines
+        sanitized = query.replace('"', " ").replace('"', " ").replace('"', " ")
+
+        # Replace multiple spaces with a single space
+        sanitized = " ".join(sanitized.split())
+
+        # Ensure the query isn't too long
+        if len(sanitized) > 250:
+            sanitized = sanitized[:250]
+
+        logger.info(f"Sanitized query: '{query}' -> '{sanitized}'")
+        return sanitized
+
+    async def process_search_result(
+        self, result: Dict, query: str, query_embedding: List[float]
+    ) -> Dict:
+        """Process a search result to extract and compress content"""
+        title = result.get("title", "")
+        url = result.get("url", "")
+        snippet = result.get("snippet", "")
+
+        await self.emit_status("info", f"Processing result: {title[:50]}...", False)
+
+        try:
+            # If the snippet is empty or short but we have a URL, try to fetch content
+            if (not snippet or len(snippet) < 200) and url:
+                await self.emit_status(
+                    "info", f"Fetching content from URL: {url}...", False
+                )
+                content = await self.fetch_content(url)
+
+                if content and len(content) > 200:
+                    snippet = content
+                    logger.debug(
+                        f"Successfully fetched content from URL: {url} ({len(content)} chars)"
+                    )
+                else:
+                    logger.warning(f"Failed to fetch useful content from URL: {url}")
+
+            # If we still don't have useful content, return what we have
+            if not snippet or len(snippet) < 200:
+                return {
+                    "title": title or f"Result for '{query}'",
+                    "url": url,
+                    "content": snippet
+                    or f"No substantial content available for this result.",
+                    "query": query,
+                }
+
+            # Process with the large model if we have substantial content
+            if len(snippet) > 300:
+                try:
+                    await self.emit_status("info", "Summarizing content...", False)
+
+                    # Use the large model to extract key information
+                    summary_prompt = {
+                        "role": "system",
+                        "content": """You are a research assistant processing search results.
+Summarize the following content to extract the most relevant information related to the query.
+Focus on extracting factual information, key details, statistics, explanations, and direct answers.
+Do not comment on webpage structure or HTML elements.
+Include all relevant facts, figures, and information.
+Format your summary with clear paragraphs and appropriate organization.""",
+                    }
+
+                    # Use up to 10,000 characters of the content for summarization
+                    content_length = min(10000, len(snippet))
+
+                    summary_messages = [
+                        summary_prompt,
+                        {
+                            "role": "user",
+                            "content": f"Query: {query}\n\nContent to summarize:\n{snippet[:content_length]}",
+                        },
+                    ]
+
+                    # Attempt to summarize with the large model
+                    try:
+                        summarize_task = asyncio.create_task(
+                            self.generate_completion(
+                                self.valves.LARGE_MODEL, summary_messages
+                            )
+                        )
+                        summary_response = await asyncio.wait_for(
+                            summarize_task, timeout=30.0
+                        )
+
+                        # Extract the summarized content
+                        if (
+                            summary_response
+                            and "choices" in summary_response
+                            and len(summary_response["choices"]) > 0
+                        ):
+                            processed_content = summary_response["choices"][0][
+                                "message"
+                            ]["content"]
+
+                            # If we got a good summary, use it
+                            if processed_content and len(processed_content) > 100:
+                                return {
+                                    "title": title,
+                                    "url": url,
+                                    "content": processed_content,
+                                    "query": query,
+                                }
+
+                    except (asyncio.TimeoutError, Exception) as e:
+                        logger.error(f"Model summarization failed: {e}")
+                        # Will fall back to compression below
+
+                except Exception as e:
+                    logger.error(f"Error in content processing: {e}")
+
+            # If we're here, either summarization failed or wasn't attempted
+            # Fall back to semantic compression
+            try:
+                compressed_content = await self.compress_content(
+                    snippet, query_embedding
+                )
+
+                # Use compressed content if available, otherwise use original (but limited)
+                if compressed_content and len(compressed_content) > 200:
+                    final_content = compressed_content
+                else:
+                    # Limit original content to a reasonable size
+                    final_content = snippet[:15000]
+
+                return {
+                    "title": title,
+                    "url": url,
+                    "content": final_content,
+                    "query": query,
+                }
+
+            except Exception as e:
+                logger.error(f"Compression failed: {e}")
+                # Last resort: return limited original content
+                return {
+                    "title": title,
+                    "url": url,
+                    "content": snippet[:15000],
+                    "query": query,
+                }
+
+        except Exception as e:
+            logger.error(f"Unhandled error in process_search_result: {e}")
+            # Return a failure result
+            return {
+                "title": title or f"Error processing result for '{query}'",
+                "url": url,
+                "content": f"Error processing search result: {str(e)}\n\nOriginal snippet: {snippet[:1000] if snippet else 'No content available'}",
+                "query": query,
+            }
+
+    async def generate_completion(
+        self, model: str, messages: List[Dict], stream: bool = False
+    ):
+        """Generate a completion from the specified model"""
+        try:
+            form_data = {
+                "model": model,
+                "messages": messages,
+                "stream": stream,
+                "temperature": self.valves.TEMPERATURE,
+            }
+
+            response = await generate_chat_completion(
+                self.__request__,
+                form_data,
+                user=self.__user__,
+            )
+
+            return response
+        except Exception as e:
+            logger.error(f"Error generating completion with model {model}: {e}")
+            # Return a minimal valid response structure
+            return {"choices": [{"message": {"content": f"Error: {str(e)}"}}]}
+
+    async def emit_message(self, message: str):
+        """Emit a message to the client"""
+        try:
+            await self.__current_event_emitter__(
+                {"type": "message", "data": {"content": message}}
+            )
+        except Exception as e:
+            logger.error(f"Error emitting message: {e}")
+            # Can't do much if this fails, but we don't want to crash
+
+    async def emit_status(self, level: str, message: str, done: bool = False):
+        """Emit a status message to the client"""
+        await self.__current_event_emitter__(
+            {
+                "type": "status",
+                "data": {
+                    "status": "complete" if done else "in_progress",
+                    "level": level,
+                    "description": message,
+                    "done": done,
+                },
+            }
+        )
+
+    async def process_query(
+        self, query: str, query_embedding: List[float]
+    ) -> List[Dict]:
+        """Process a single search query and get results"""
+        await self.emit_status("info", f"Searching for: {query}", False)
+
+        # Get search results for the query
+        search_results = await self.search_web(query)
+        if not search_results:
+            await self.emit_message(f"*No results found for query: {query}*\n\n")
+            return []
+
+        # Process each search result until we have enough successful results
+        successful_results = []
+        failed_count = 0
+
+        for result in search_results:
+            # Stop if we've reached our target of successful results
+            if len(successful_results) >= self.valves.SUCCESSFUL_RESULTS_PER_QUERY:
+                break
+
+            # Stop if we've had too many consecutive failures
+            if failed_count >= self.valves.MAX_FAILED_RESULTS:
+                await self.emit_message(
+                    f"*Skipping remaining results for query: {query} after {failed_count} failures*\n\n"
+                )
+                break
+
+            try:
+                # Process the result
+                processed_result = await self.process_search_result(
+                    result, query, query_embedding
+                )
+
+                # Check if processing was successful (has substantial content)
+                if (
+                    processed_result
+                    and processed_result.get("content")
+                    and len(processed_result.get("content", "")) > 200
+                ):
+                    # Add to successful results
+                    successful_results.append(processed_result)
+
+                    # Display the result to the user
+                    result_text = f"#### Result: "
+                    if processed_result["url"]:
+                        result_text += f"[{processed_result['title']}]({processed_result['url']})\n\n"
+                    else:
+                        result_text += f"{processed_result['title']}\n\n"
+
+                    result_text += f"*From query: {query}*\n\n"
+                    result_text += f"{processed_result['content'][:2000]}...\n\n"
+
+                    await self.emit_message(result_text)
+
+                    # Reset failed count on success
+                    failed_count = 0
+                else:
+                    # Count as a failure
+                    failed_count += 1
+                    logger.warning(
+                        f"Failed to get substantial content from result {len(successful_results) + failed_count} for query: {query}"
+                    )
+
+            except Exception as e:
+                # Count as a failure
+                failed_count += 1
+                logger.error(f"Error processing result for query '{query}': {e}")
+                await self.emit_message(
+                    f"*Error processing a result for query: {query}*\n\n"
+                )
+
+        return successful_results
+
+    async def pipe(
+        self,
+        body: dict,
+        __user__: dict,
+        __event_emitter__=None,
+        __task__=None,
+        __model__=None,
+        __request__=None,
+    ) -> str:
+        self.__current_event_emitter__ = __event_emitter__
+        self.__user__ = User(**__user__)
+        self.__model__ = __model__
+        self.__request__ = __request__
+
+        # If the pipe is disabled or it's not a default task, return
+        if not self.valves.ENABLED or (__task__ and __task__ != TASKS.DEFAULT):
+            return ""
+
+        # Get user query from the messages
+        user_message = body.get("messages", [])[-1].get("content", "").strip()
+        if not user_message:
+            return ""
+
+        await self.emit_status("info", "Starting deep research...", False)
+        await self.emit_message("## Deep Research Mode: Activated\n\n")
+        await self.emit_message(
+            "I'll search for comprehensive information about your query. This might take a moment...\n\n"
+        )
+
+        # Step 1: Generate initial search queries based only on user query
+        await self.emit_status("info", "Generating initial search queries...", False)
+
+        initial_query_prompt = {
+            "role": "system",
+            "content": """You are a research assistant generating effective search queries.
+Based on the user's question, generate 3 initial search queries to begin research.
+Each query should be specific, use relevant keywords, and be designed to find information to help answer the question.
+
+Format your response as a valid JSON object with the following structure:
+{"queries": [
+  "search query 1",
+  "search query 2",
+  "search query 3"
+]}""",
+        }
+
+        initial_query_messages = [
+            initial_query_prompt,
+            {
+                "role": "user",
+                "content": f"Generate initial search queries for: {user_message}",
+            },
+        ]
+
+        # Get initial search queries
+        query_response = await self.generate_completion(
+            self.valves.LARGE_MODEL, initial_query_messages
+        )
+        query_content = query_response["choices"][0]["message"]["content"]
+
+        # Extract JSON from response
+        try:
+            query_json_str = query_content[
+                query_content.find("{") : query_content.rfind("}") + 1
+            ]
+            query_data = json.loads(query_json_str)
+            initial_queries = query_data.get("queries", [])
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Error parsing query JSON: {e}")
+            # Fallback: extract queries using regex if JSON parsing fails
+            import re
+
+            initial_queries = re.findall(r'"([^"]+)"', query_content)[:3]
+            if not initial_queries:
+                initial_queries = ["Information about " + user_message]
+
+        # Display the queries to the user
+        await self.emit_message(f"### Initial Research Queries\n\n")
+        for i, query in enumerate(initial_queries):
+            await self.emit_message(f"**Query {i+1}**: {query}\n\n")
+
+        # Step 2: Execute initial searches and collect results
+        initial_results = []
+        for query in initial_queries:
+            # Get query embedding for content comparison
+            try:
+                await self.emit_status(
+                    "info", f"Getting embedding for query: {query}", False
+                )
+                query_embedding = await self.get_embedding(query)
+                if not query_embedding:
+                    # If we can't get an embedding from the model, create a default one
+                    logger.warning(
+                        f"Failed to get embedding for '{query}', using default"
+                    )
+                    query_embedding = [0] * 384  # Default embedding size
+            except Exception as e:
+                logger.error(f"Error getting embedding: {e}")
+                query_embedding = [0] * 384  # Default embedding size
+
+            # Process the query and get results
+            results = await self.process_query(query, query_embedding)
+
+            # Add successful results to our collection
+            initial_results.extend(results)
+
+        # If we didn't get any results, create a minimal result to continue
+        if not initial_results:
+            await self.emit_message(
+                f"*Unable to find initial search results. Creating research outline based on the query alone.*\n\n"
+            )
+            initial_results = [
+                {
+                    "title": f"Information about {user_message}",
+                    "url": "",
+                    "content": f"This is a placeholder for research about {user_message}. The search failed to return usable results.",
+                    "query": user_message,
+                }
+            ]
+
+        # Step 3: Generate research outline based on user query AND initial results
+        await self.emit_status(
+            "info",
+            "Analyzing initial results and generating research outline...",
+            False,
+        )
+
+        outline_prompt = {
+            "role": "system",
+            "content": """You are a research assistant tasked with creating a structured research outline.
+Based on the user's query and the initial search results, create a comprehensive outline of what information
+needs to be gathered to provide a complete answer.
+
+The outline should:
+1. Break down the query into key concepts that need to be researched
+2. Identify specific information needs and questions to answer
+3. Be organized in a hierarchical structure with main topics and subtopics
+4. Include topics discovered in the initial search results
+5. Prioritize topics that seem most relevant to answering the query
+
+Format your response as a valid JSON object with the following structure:
+{"outline": [
+  {"topic": "Main topic 1", "subtopics": ["Subtopic 1.1", "Subtopic 1.2"]},
+  {"topic": "Main topic 2", "subtopics": ["Subtopic 2.1", "Subtopic 2.2"]}
+]}""",
+        }
+
+        # Build context from initial search results
+        outline_context = "### Initial Search Results:\n\n"
+        for i, result in enumerate(initial_results):
+            outline_context += f"Result {i+1} (Query: '{result['query']}')\n"
+            outline_context += f"Title: {result['title']}\n"
+            outline_context += f"Content: {result['content'][:1000]}...\n\n"
+
+        outline_messages = [
+            outline_prompt,
+            {
+                "role": "user",
+                "content": f"Original query: {user_message}\n\n{outline_context}\n\nGenerate a comprehensive research outline.",
+            },
+        ]
+
+        # Generate the research outline
+        outline_response = await self.generate_completion(
+            self.valves.LARGE_MODEL, outline_messages
+        )
+        outline_content = outline_response["choices"][0]["message"]["content"]
+
+        # Extract JSON from response
+        try:
+            outline_json_str = outline_content[
+                outline_content.find("{") : outline_content.rfind("}") + 1
+            ]
+            outline_data = json.loads(outline_json_str)
+            research_outline = outline_data.get("outline", [])
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Error parsing outline JSON: {e}")
+            # Fallback: create a simple outline if JSON parsing fails
+            research_outline = [
+                {
+                    "topic": "General Information",
+                    "subtopics": ["Background", "Key Concepts"],
+                },
+                {
+                    "topic": "Specific Aspects",
+                    "subtopics": ["Detailed Analysis", "Examples"],
+                },
+            ]
+
+        # Create a flat list of all topics and subtopics for tracking completeness
+        all_topics = []
+        for topic_item in research_outline:
+            all_topics.append(topic_item["topic"])
+            all_topics.extend(topic_item.get("subtopics", []))
+
+        # Display the outline to the user
+        outline_text = "### Research Outline\n\n"
+        for topic in research_outline:
+            outline_text += f"**{topic['topic']}**\n"
+            for subtopic in topic.get("subtopics", []):
+                outline_text += f"- {subtopic}\n"
+            outline_text += "\n"
+
+        await self.emit_message(outline_text)
+        await self.emit_status(
+            "info", "Research outline generated. Continuing research...", False
+        )
+
+        # Initialize research variables for continued cycles
+        cycle = 1  # We've already done one cycle with the initial queries
+        max_cycles = self.valves.MAX_CYCLES
+        min_cycles = self.valves.MIN_CYCLES
+        completed_topics = set()
+        search_history = initial_queries.copy()
+        results_history = initial_results.copy()
+        active_outline = list(all_topics)  # Topics that still need research
+
+        # Step 4: Begin research cycles
+        while cycle < max_cycles and active_outline:
+            cycle += 1
+            await self.emit_status(
+                "info",
+                f"Research cycle {cycle}/{max_cycles}: Generating search queries...",
+                False,
+            )
+
+            # Generate search queries with the large model
+            query_prompt = {
+                "role": "system",
+                "content": """You are a research assistant generating effective search queries.
+Based on the user's original question and the current research needs, generate 3 search queries.
+Each query should be specific, use relevant keywords, and be designed to find targeted information.
+
+Consider:
+1. The original user query
+2. The research outline topics that still need to be addressed
+3. Information already gathered from previous searches (if any)
+4. Create queries that are distinct from previous searches
+
+Format your response as a valid JSON object with the following structure:
+{"queries": [
+  {"query": "search query 1", "topic": "related research topic"},
+  {"query": "search query 2", "topic": "related research topic"},
+  {"query": "search query 3", "topic": "related research topic"}
+]}""",
+            }
+
+            # Build context from previous search results
+            search_context = ""
+            if results_history:
+                search_context += "### Previously gathered information:\n\n"
+                for i, result in enumerate(
+                    results_history[-5:]
+                ):  # Just include the last 5 results
+                    search_context += f"Result {i+1} (Query: '{result['query']}')\n"
+                    search_context += f"URL: {result['url']}\n"
+                    search_context += f"Summary: {result['content'][:500]}...\n\n"
+
+            # Include previous queries to avoid duplication
+            if search_history:
+                search_context += "### Previous search queries:\n"
+                search_context += ", ".join([f"'{q}'" for q in search_history[-10:]])
+                search_context += "\n\n"
+
+            # Include active research topics
+            search_context += "### Research topics still needing information:\n"
+            for topic in active_outline[:10]:  # Limit to first 10 for clarity
+                search_context += f"- {topic}\n"
+
+            query_messages = [
+                query_prompt,
+                {
+                    "role": "user",
+                    "content": f"Original query: {user_message}\n\n{search_context}\n\nGenerate 3 effective search queries to gather information for the remaining research topics.",
+                },
+            ]
+
+            # Get search queries
+            query_response = await self.generate_completion(
+                self.valves.LARGE_MODEL, query_messages
+            )
+            query_content = query_response["choices"][0]["message"]["content"]
+
+            # Extract JSON from response
+            try:
+                query_json_str = query_content[
+                    query_content.find("{") : query_content.rfind("}") + 1
+                ]
+                query_data = json.loads(query_json_str)
+                queries = query_data.get("queries", [])
+
+                # Check if queries is a list of strings or a list of objects
+                if queries and isinstance(queries[0], str):
+                    # Convert to objects with query and topic
+                    query_strings = queries
+                    query_topics = (
+                        active_outline[: len(queries)]
+                        if active_outline
+                        else ["Research"] * len(queries)
+                    )
+                    queries = [
+                        {"query": q, "topic": t}
+                        for q, t in zip(query_strings, query_topics)
+                    ]
+            except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+                logger.error(f"Error parsing query JSON: {e}")
+                # Fallback: generate basic queries for active outline topics
+                queries = []
+                for i, topic in enumerate(active_outline[:3]):
+                    queries.append({"query": f"{user_message} {topic}", "topic": topic})
+
+            # Extract query strings and topics
+            query_strings = [item["query"] for item in queries]
+            query_topics = [item.get("topic", "Research") for item in queries]
+
+            # Display the queries to the user
+            await self.emit_message(f"### Research Cycle {cycle}: Search Queries\n\n")
+            for i, (query, topic) in enumerate(zip(query_strings, query_topics)):
+                await self.emit_message(
+                    f"**Query {i+1}**: {query} (for topic: {topic})\n\n"
+                )
+
+            # Add queries to search history
+            search_history.extend(query_strings)
+
+            # Step 5: Execute searches and process results
+            cycle_results = []
+            for query, topic in zip(query_strings, query_topics):
+                # Get query embedding for content comparison
+                try:
+                    query_embedding = await self.get_embedding(query)
+                    if not query_embedding:
+                        query_embedding = [0] * 384  # Default embedding size
+                except Exception as e:
+                    logger.error(f"Error getting embedding: {e}")
+                    query_embedding = [0] * 384  # Default embedding size
+
+                # Process the query and get results
+                results = await self.process_query(query, query_embedding)
+
+                # Add successful results to the cycle results and history
+                cycle_results.extend(results)
+                results_history.extend(results)
+
+            # Step 6: Analyze results and update research outline
+            if cycle_results:
+                await self.emit_status(
+                    "info",
+                    "Analyzing search results and updating research outline...",
+                    False,
+                )
+
+                analysis_prompt = {
+                    "role": "system",
+                    "content": """You are a research assistant analyzing search results and updating a research outline.
+Examine the search results and the current research outline.
+Determine which topics have been adequately addressed by the search results.
+Update the research outline by removing topics that have been sufficiently covered.
+
+Format your response as a valid JSON object with the following structure:
+{
+  "completed_topics": ["Topic 1", "Subtopic 2.1"],
+  "partial_topics": ["Topic 2"],
+  "new_topics": ["New topic discovered"],
+  "analysis": "Brief analysis of what we've learned and what still needs research"
+}""",
+                }
+
+                # Create a context with the current outline and search results
+                analysis_context = "### Current Research Outline Topics:\n"
+                analysis_context += "\n".join(
+                    [f"- {topic}" for topic in active_outline]
+                )
+                analysis_context += "\n\n### Latest Search Results:\n\n"
+
+                for i, result in enumerate(cycle_results):
+                    analysis_context += f"Result {i+1} (Query: '{result['query']}')\n"
+                    analysis_context += f"Title: {result['title']}\n"
+                    analysis_context += f"Content: {result['content'][:1000]}...\n\n"
+
+                analysis_messages = [
+                    analysis_prompt,
+                    {
+                        "role": "user",
+                        "content": f"Original query: {user_message}\n\n{analysis_context}\n\nAnalyze these results and update the research outline.",
+                    },
+                ]
+
+                try:
+                    analysis_response = await self.generate_completion(
+                        self.valves.LARGE_MODEL, analysis_messages
+                    )
+                    analysis_content = analysis_response["choices"][0]["message"][
+                        "content"
+                    ]
+
+                    # Extract JSON from response
+                    analysis_json_str = analysis_content[
+                        analysis_content.find("{") : analysis_content.rfind("}") + 1
+                    ]
+                    analysis_data = json.loads(analysis_json_str)
+
+                    # Update completed topics
+                    newly_completed = set(analysis_data.get("completed_topics", []))
+                    completed_topics.update(newly_completed)
+
+                    # Add any new topics discovered
+                    new_topics = analysis_data.get("new_topics", [])
+                    for topic in new_topics:
+                        if topic not in all_topics and topic not in completed_topics:
+                            active_outline.append(topic)
+                            all_topics.append(topic)
+
+                    # Update active outline by removing completed topics
+                    active_outline = [
+                        topic
+                        for topic in active_outline
+                        if topic not in completed_topics
+                    ]
+
+                    # Display analysis to the user
+                    analysis_text = f"### Research Analysis (Cycle {cycle})\n\n"
+                    analysis_text += f"{analysis_data.get('analysis', 'Analysis not available.')}\n\n"
+
+                    if newly_completed:
+                        analysis_text += "**Topics Completed:**\n"
+                        for topic in newly_completed:
+                            analysis_text += f"✓ {topic}\n"
+                        analysis_text += "\n"
+
+                    if analysis_data.get("partial_topics"):
+                        analysis_text += "**Topics Partially Addressed:**\n"
+                        for topic in analysis_data.get("partial_topics"):
+                            analysis_text += f"⚪ {topic}\n"
+                        analysis_text += "\n"
+
+                    if new_topics:
+                        analysis_text += "**New Topics Discovered:**\n"
+                        for topic in new_topics:
+                            analysis_text += f"+ {topic}\n"
+                        analysis_text += "\n"
+
+                    if active_outline:
+                        analysis_text += "**Remaining Topics:**\n"
+                        for topic in active_outline[:5]:  # Show just the first 5
+                            analysis_text += f"□ {topic}\n"
+                        if len(active_outline) > 5:
+                            analysis_text += f"...and {len(active_outline) - 5} more\n"
+                        analysis_text += "\n"
+
+                    await self.emit_message(analysis_text)
+
+                except Exception as e:
+                    logger.error(f"Error analyzing results: {e}")
+                    await self.emit_message(
+                        f"### Research Progress (Cycle {cycle})\n\nContinuing research on remaining topics...\n\n"
+                    )
+                    # Mark one topic as completed to ensure progress
+                    if active_outline:
+                        completed_topic = active_outline[0]
+                        completed_topics.add(completed_topic)
+                        active_outline.remove(completed_topic)
+                        await self.emit_message(
+                            f"**Topic Addressed:** {completed_topic}\n\n"
+                        )
+
+            # Check termination criteria
+            if not active_outline or active_outline == []:
+                await self.emit_status(
+                    "info", "All research topics have been addressed!", False
+                )
+                break
+
+            if cycle >= min_cycles and len(completed_topics) / len(all_topics) > 0.7:
+                await self.emit_status(
+                    "info",
+                    "Most research topics have been addressed. Finalizing...",
+                    False,
+                )
+                break
+
+            # Continue to next cycle if we haven't hit max_cycles
+            if cycle >= max_cycles:
+                await self.emit_status(
+                    "info",
+                    f"Maximum research cycles ({max_cycles}) reached. Finalizing...",
+                    False,
+                )
+                break
+
+            await self.emit_status(
+                "info",
+                f"Research cycle {cycle} complete. Moving to next cycle...",
+                False,
+            )
+
+        # Step 7: Synthesize final answer with the selected model
+        await self.emit_status(
+            "info", "Synthesizing comprehensive answer from research results...", False
+        )
+        await self.emit_message(
+            "\n\n---\n\n### Research Complete\n\nSynthesizing comprehensive answer...\n\n"
+        )
+
+        # Determine which model to use for synthesis
+        synthesis_model = self.valves.LARGE_MODEL
+        if (
+            self.valves.SYNTHESIS_MODEL
+            and self.valves.SYNTHESIS_MODEL != self.valves.LARGE_MODEL
+        ):
+            synthesis_model = self.valves.SYNTHESIS_MODEL
+            await self.emit_message(
+                f"*Using {synthesis_model} for final synthesis*\n\n"
+            )
+
+            # Note: We're not trying to unload the previous model as that's causing issues
+            # The Ollama server will manage the models as needed
+
+        # Prepare synthesis prompt with all gathered information
+        synthesis_prompt = {
+            "role": "system",
+            "content": """You are a research assistant synthesizing information into a comprehensive answer.
+Based on the user's original query and the information gathered during research,
+create a highly-detailed, well-organized response that thoroughly answers the query and uses all of the research.
+
+Your synthesis should:
+1. Be comprehensive in answering the user's query based on every single available research point
+2. Organize information logically by topic
+3. Include all relevant details from the research
+4. Cite sources where appropriate using footnotes or inline citations
+5. Identify any areas where information was limited or unavailable
+
+The user will only see your final synthesis, not the research process, so make it complete and thorough.""",
+        }
+
+        # Build context from all search results
+        synthesis_context = "### Research Outline:\n"
+        for topic in research_outline:
+            synthesis_context += f"**{topic['topic']}**\n"
+            for subtopic in topic.get("subtopics", []):
+                synthesis_context += f"- {subtopic}\n"
+            synthesis_context += "\n"
+
+        synthesis_context += "### Research Results:\n\n"
+        for i, result in enumerate(results_history):
+            synthesis_context += f"Result {i+1}: {result['title']} ({result['url']})\n"
+            synthesis_context += f"Query: {result['query']}\n"
+            synthesis_context += f"Content: {result['content'][:1000]}...\n\n"
+
+        # Include stats on completed vs. total topics
+        synthesis_context += f"### Research Stats:\n"
+        synthesis_context += (
+            f"- Completed Topics: {len(completed_topics)}/{len(all_topics)}\n"
+        )
+        synthesis_context += f"- Research Cycles: {cycle}/{max_cycles}\n"
+        synthesis_context += f"- Total Results Analyzed: {len(results_history)}\n\n"
+
+        synthesis_messages = [
+            synthesis_prompt,
+            {
+                "role": "user",
+                "content": f"Original query: {user_message}\n\n{synthesis_context}\n\nSynthesize a comprehensive answer.",
+            },
+        ]
+
+        # Generate the final synthesis
+        try:
+            await self.emit_status(
+                "info",
+                f"Generating final comprehensive answer with {synthesis_model}...",
+                False,
+            )
+
+            # Stream the response for a better user experience
+            form_data = {
+                "model": synthesis_model,
+                "messages": synthesis_messages,
+                "stream": True,
+                "temperature": self.valves.SYNTHESIS_TEMPERATURE,
+            }
+
+            response = await generate_chat_completion(
+                self.__request__,
+                form_data,
+                user=self.__user__,
+            )
+
+            await self.emit_message("\n\n## Comprehensive Answer\n\n")
+
+            # Stream the response chunks
+            if hasattr(response, "body_iterator"):
+                async for chunk in response.body_iterator:
+                    chunk_str = (
+                        chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
+                    )
+                    if chunk_str.startswith("data: "):
+                        chunk_str = chunk_str[6:]
+                        chunk_str = chunk_str.strip()
+                        if chunk_str == "[DONE]" or not chunk_str:
+                            continue
+                        try:
+                            chunk_data = json.loads(chunk_str)
+                            if (
+                                "choices" in chunk_data
+                                and len(chunk_data["choices"]) > 0
+                            ):
+                                delta = chunk_data["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    await self.emit_message(delta["content"])
+                        except json.JSONDecodeError:
+                            logger.error(
+                                f'ChunkDecodeError: unable to parse "{chunk_str[:100]}"'
+                            )
+
+                # If the response has a background task, execute it
+                if response.background is not None:
+                    await response.background()
+            else:
+                # Handle non-streaming response
+                if "choices" in response and len(response["choices"]) > 0:
+                    content = response["choices"][0]["message"]["content"]
+                    await self.emit_message(content)
+
+        except Exception as e:
+            logger.error(f"Error generating synthesis: {e}")
+            await self.emit_message(
+                f"*Error generating final synthesis with {synthesis_model}. Please review the research results above.*\n\n"
+            )
+
+        # Complete the process
+        await self.emit_status("success", "Deep research complete!", True)
+        return ""
